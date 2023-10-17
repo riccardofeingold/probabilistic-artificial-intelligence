@@ -1,12 +1,12 @@
 import os
 import typing
-from sklearn.gaussian_process.kernels import *
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.cluster import KMeans
+from sklearn.utils import shuffle
 import matplotlib.pyplot as plt
 from matplotlib import cm
-
 
 # Set `EXTENDED_EVALUATION` to `True` in order to visualize your predictions.
 EXTENDED_EVALUATION = False
@@ -32,12 +32,8 @@ class Model(object):
         self.rng = np.random.default_rng(seed=0)
 
         # TODO: Add custom initialization for your model here if necessary
-        # self.length = 1
-        # self.kernel = RBF(self.length)
-        self.kernel = Matern()
-        self.n_clusters = 450
-        self.neighbors = 25
-        self.gp = GaussianProcessRegressor(kernel=self.kernel,n_restarts_optimizer=3, normalize_y=True, random_state=1)
+        self.kernel = Matern(nu=0.5, length_scale=0.1)
+        self.model = GaussianProcessRegressor(self.kernel, random_state=1, n_restarts_optimizer=9)
 
     def make_predictions(self, test_x_2D: np.ndarray, test_x_AREA: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -54,9 +50,8 @@ class Model(object):
         gp_std = np.zeros(test_x_2D.shape[0], dtype=float)
 
         # TODO: Use the GP posterior to form your predictions here
-        gp_mean, gp_std = self.gp.predict(test_x_2D, return_std=True)
-        predictions = gp_mean # replace this
-
+        predictions, gp_std = self.model.predict(test_x_2D, return_std=True)
+        gp_mean = np.mean(predictions)
         return predictions, gp_mean, gp_std
 
     def fitting_model(self, train_y: np.ndarray,train_x_2D: np.ndarray):
@@ -67,30 +62,9 @@ class Model(object):
         """
 
         # TODO: Fit your model here
-        indices = self.preprocess_data(train_x_2D, train_y)
-
-        self.gp.fit(train_x_2D[indices], train_y[indices])
-
+        train_x, target_y = shuffle(train_x_2D, train_y)
+        self.model.fit(train_x[:5000, :], target_y[:5000])
         pass
-    
-    def preprocess_data(self, train_x: np.ndarray, train_y: np.ndarray):
-        data = np.column_stack((train_x, train_y))
-        kmeans = KMeans(n_clusters=self.n_clusters, random_state=10)
-        kmeans.fit(data)
-        k_pred = kmeans.predict(data) 
-        dist = kmeans.transform(data)
-        result = np.zeros([self.n_clusters*self.neighbors, 3])
-
-        indices = []
-
-        for n in range(self.n_clusters):
-            indices_cluster = [i for i, x in enumerate(k_pred==n) if x]
-            N = min([len(indices_cluster), self.neighbors])
-            for j in range(N):   
-                indices.append(indices_cluster[int(np.argmin(dist[indices_cluster, n]))])
-                indices_cluster = np.delete(indices_cluster, np.argmin(dist[indices_cluster, n]))        
-
-        return indices
 
 # You don't have to change this function
 def cost_function(ground_truth: np.ndarray, predictions: np.ndarray, AREA_idxs: np.ndarray) -> float:
@@ -238,6 +212,8 @@ def main():
     print('Predicting on test features')
     predictions = model.make_predictions(test_x_2D, test_x_AREA)
     print(predictions)
+
+    print(model.kernel.theta)
 
     if EXTENDED_EVALUATION:
         perform_extended_evaluation(model, output_dir='.')
