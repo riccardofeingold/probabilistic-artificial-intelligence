@@ -32,9 +32,10 @@ class Model(object):
         self.rng = np.random.default_rng(seed=0)
 
         # TODO: Add custom initialization for your model here if necessary
+        self.train_x_area: np.ndarray = None
         self.kernel = Matern(nu=0.5, length_scale=0.1)
         self.kernel.theta = [-2.3025] # has been found by using GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=9) which optimizes the kernel parameters based on the marginal likelihood
-        self.model = GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=0)
+        self.model = GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=0, normalize_y=True)
 
     def make_predictions(self, test_x_2D: np.ndarray, test_x_AREA: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -65,7 +66,12 @@ class Model(object):
         # TODO: Fit your model here
         train_x, _, target_y, _ = train_test_split(train_x_2D, train_y, train_size=0.7, random_state=0)
         self.model.fit(train_x, target_y)
+
+
         pass
+
+
+    # def optimizer()
 
 # You don't have to change this function
 def cost_function(ground_truth: np.ndarray, predictions: np.ndarray, AREA_idxs: np.ndarray) -> float:
@@ -207,6 +213,7 @@ def main():
     # Fit the model
     print('Fitting model')
     model = Model()
+    model.train_x_area = train_x_AREA
     model.fitting_model(train_y,train_x_2D)
 
     # Predict on the test features
