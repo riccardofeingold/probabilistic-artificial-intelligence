@@ -3,7 +3,7 @@ import typing
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.cluster import KMeans
+from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 import matplotlib.pyplot as plt
 from matplotlib import cm
@@ -33,7 +33,8 @@ class Model(object):
 
         # TODO: Add custom initialization for your model here if necessary
         self.kernel = Matern(nu=0.5, length_scale=0.1)
-        self.model = GaussianProcessRegressor(self.kernel, random_state=1, n_restarts_optimizer=9)
+        self.kernel.theta = [-2.3025] # has been found by using GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=9) which optimizes the kernel parameters based on the marginal likelihood
+        self.model = GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=0)
 
     def make_predictions(self, test_x_2D: np.ndarray, test_x_AREA: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -50,8 +51,8 @@ class Model(object):
         gp_std = np.zeros(test_x_2D.shape[0], dtype=float)
 
         # TODO: Use the GP posterior to form your predictions here
-        predictions, gp_std = self.model.predict(test_x_2D, return_std=True)
-        gp_mean = np.mean(predictions)
+        gp_mean, gp_std = self.model.predict(test_x_2D, return_std=True)
+        predictions = gp_mean
         return predictions, gp_mean, gp_std
 
     def fitting_model(self, train_y: np.ndarray,train_x_2D: np.ndarray):
@@ -62,8 +63,8 @@ class Model(object):
         """
 
         # TODO: Fit your model here
-        train_x, target_y = shuffle(train_x_2D, train_y)
-        self.model.fit(train_x[:5000, :], target_y[:5000])
+        train_x, _, target_y, _ = train_test_split(train_x_2D, train_y, train_size=0.7, random_state=0)
+        self.model.fit(train_x, target_y)
         pass
 
 # You don't have to change this function
