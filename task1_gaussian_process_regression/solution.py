@@ -33,8 +33,14 @@ class Model(object):
 
         # TODO: Add custom initialization for your model here if necessary
         self.train_x_area: np.ndarray = None
+        self.test_x_area: np.ndarray = None
+        self.train_x_2D: np.ndarray = None
+        self.train_y: np.ndarray = None
+        self.test_x_2D: np.ndarray = None
+        self.test_y: np.ndarray = None
+
         self.kernel = Matern(nu=0.5, length_scale=0.1)
-        self.kernel.theta = [-2.3025] # has been found by using GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=9) which optimizes the kernel parameters based on the marginal likelihood
+        # self.kernel.theta = [-2.3025] # has been found by using GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=9) which optimizes the kernel parameters based on the marginal likelihood
         self.model = GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=0, normalize_y=True)
 
     def make_predictions(self, test_x_2D: np.ndarray, test_x_AREA: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -53,7 +59,10 @@ class Model(object):
 
         # TODO: Use the GP posterior to form your predictions here
         gp_mean, gp_std = self.model.predict(test_x_2D, return_std=True)
-        predictions = gp_mean
+        # factor of 0.4 => best result
+        # predictions = np.where(test_x_AREA == 1, gp_mean + gp_std*0.23333333333333334, gp_mean)
+        predictions = np.where(test_x_AREA == 1, gp_mean + gp_std, gp_mean)
+        # predictions = gp_mean 
         return predictions, gp_mean, gp_std
 
     def fitting_model(self, train_y: np.ndarray,train_x_2D: np.ndarray):
@@ -64,14 +73,10 @@ class Model(object):
         """
 
         # TODO: Fit your model here
-        train_x, _, target_y, _ = train_test_split(train_x_2D, train_y, train_size=0.7, random_state=0)
-        self.model.fit(train_x, target_y)
-
-
+        # self.train_x_2D, self.test_x_2D, self.train_y, self.test_y, self.train_x_2D, self.test_x_2D, self.train_x_area, self.test_x_area = train_test_split(train_x_2D, train_y, train_x_2D, self.train_x_area, train_size=0.7, random_state=0)
+        self.train_x_2D, _, self.train_y, _ = train_test_split(train_x_2D, train_y)
+        self.model.fit(self.train_x_2D, self.train_y)
         pass
-
-
-    # def optimizer()
 
 # You don't have to change this function
 def cost_function(ground_truth: np.ndarray, predictions: np.ndarray, AREA_idxs: np.ndarray) -> float:
@@ -215,6 +220,22 @@ def main():
     model = Model()
     model.train_x_area = train_x_AREA
     model.fitting_model(train_y,train_x_2D)
+    predictions, gp_mean, gp_std = model.make_predictions(model.test_x_2D, model.test_x_area)
+    cost = cost_function(model.test_y, predictions, model.test_x_area)
+
+    # find a suitable coefficient for gp_std which we could add to the predicition
+    # in order to ensure no underprediction
+    factor = 0
+    num_iterations = 30
+    for i in range(num_iterations):
+        predictions = np.where(model.test_x_area == 1, gp_mean + i*gp_std/num_iterations, gp_mean)
+        new_cost = cost_function(model.test_y, predictions, model.test_x_area)
+        if new_cost < cost:
+            cost = new_cost
+            factor = i/num_iterations
+            print(cost)
+            print("factor: ", factor)
+
 
     # Predict on the test features
     print('Predicting on test features')
