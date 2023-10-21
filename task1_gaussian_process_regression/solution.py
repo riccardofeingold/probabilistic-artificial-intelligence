@@ -1,10 +1,9 @@
 import os
 import typing
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel, Matern
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, Matern
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.utils import shuffle
+from sklearn.model_selection import train_test_split, KFold
 import matplotlib.pyplot as plt
 from matplotlib import cm
 
@@ -32,16 +31,10 @@ class Model(object):
         self.rng = np.random.default_rng(seed=0)
 
         # TODO: Add custom initialization for your model here if necessary
-        self.train_x_area: np.ndarray = None
-        self.test_x_area: np.ndarray = None
-        self.train_x_2D: np.ndarray = None
-        self.train_y: np.ndarray = None
-        self.test_x_2D: np.ndarray = None
-        self.test_y: np.ndarray = None
-
-        self.kernel = Matern(nu=0.5, length_scale=0.1)
-        # self.kernel.theta = [-2.3025] # has been found by using GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=9) which optimizes the kernel parameters based on the marginal likelihood
-        self.model = GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=0, normalize_y=True)
+        # kernel has been chosen based on the result of the 3-fold cross validation
+        # hyperparameters have been found by maximising the marginal log liklihood
+        self.kernel = Matern(length_scale=0.037, nu=2.5) + WhiteKernel(noise_level=0.006)
+        self.model = GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=1, normalize_y=True)
 
     def make_predictions(self, test_x_2D: np.ndarray, test_x_AREA: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -58,11 +51,11 @@ class Model(object):
         gp_std = np.zeros(test_x_2D.shape[0], dtype=float)
 
         # TODO: Use the GP posterior to form your predictions here
+        # obtain posterior mean and stdv
         gp_mean, gp_std = self.model.predict(test_x_2D, return_std=True)
-        # factor of 0.4 => best result
-        # predictions = np.where(test_x_AREA == 1, gp_mean + gp_std*0.23333333333333334, gp_mean)
+        # adjust predictions based on test_x_area
         predictions = np.where(test_x_AREA == 1, gp_mean + gp_std, gp_mean)
-        # predictions = gp_mean 
+
         return predictions, gp_mean, gp_std
 
     def fitting_model(self, train_y: np.ndarray,train_x_2D: np.ndarray):
@@ -73,10 +66,72 @@ class Model(object):
         """
 
         # TODO: Fit your model here
-        # self.train_x_2D, self.test_x_2D, self.train_y, self.test_y, self.train_x_2D, self.test_x_2D, self.train_x_area, self.test_x_area = train_test_split(train_x_2D, train_y, train_x_2D, self.train_x_area, train_size=0.7, random_state=0)
-        self.train_x_2D, _, self.train_y, _ = train_test_split(train_x_2D, train_y)
+        # using a simple random cluster: taking only 70% of the data for training => often used in ML
+        self.train_x_2D, _, self.train_y, _ = train_test_split(train_x_2D, train_y, train_size=0.7, random_state=0)
+        # fitting model
         self.model.fit(self.train_x_2D, self.train_y)
+
         pass
+
+    def reduce_sample_size(train_x: np.ndarray, train_y: np.ndarray):
+        pass
+
+def model_selection(train_x: np.ndarray, train_y: np.ndarray, train_area: np.ndarray):
+    # kernels to test
+    kernels = [
+        Matern(nu=0.5, length_scale=0.3),
+        Matern(nu=0.5, length_scale=0.3) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-7, 1e-5)),
+        Matern(nu=1.5, length_scale=0.1) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-7, 1e1)),
+        Matern(nu=2.5, length_scale=0.1) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-7, 1e1)),
+        RBF(length_scale=1.0) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-6, 1e1))
+    ]
+
+    # initialising a 3-fold cross validator
+    kf = KFold(n_splits=3, shuffle=True, random_state=0)
+    
+    results = {}
+    for k in kernels:
+        results["Kernel: " + str(k)] = {}
+        costs_per_fold = []
+        optimal_thetas = []
+        fold_counter = 1
+        print("Kernel" + str(k))
+        for train_indices, test_indices in kf.split(train_x):
+            print("Fold " + str(fold_counter))
+            # initialising gaussian process regressor model with one of the specified kernels
+            model = GaussianProcessRegressor(kernel=k, n_restarts_optimizer=1, normalize_y=True)
+
+            # collect the fold for training and testing
+            train_x_2D = train_x[train_indices]
+            train_targets = train_y[train_indices]
+            test_x_2D = train_x[test_indices]
+            test_targets = train_y[test_indices]
+            test_area = train_area[test_indices]
+
+            # fitting model
+            print("Fitting Model")
+            model.fit(train_x_2D, train_targets)
+
+            # get the posterior mean and stdv
+            print("Prediction")
+            gp_mean, gp_stdv = model.predict(test_x_2D, return_std=True)
+
+            # to ensure no underprediction at areas == 1
+            # I add the gp_stdv to the gp_mean
+            predictions = np.where(test_area == 1, gp_mean + gp_stdv, gp_mean)
+
+            # calculate the asymetric cost for this fold 
+            print("Cost Calculation")
+            cost = cost_function(test_targets, predictions, test_area)
+            costs_per_fold.append(cost)
+            optimal_thetas.append(model.kernel_.get_params())
+            fold_counter += 1
+
+        results["Kernel: " + str(k)] = {"mean cost": np.mean(costs_per_fold), "list cost": costs_per_fold, "optimal_thetas": optimal_thetas}
+
+    print("Cross Validation DONE!")
+    print(results)
+    pass
 
 # You don't have to change this function
 def cost_function(ground_truth: np.ndarray, predictions: np.ndarray, AREA_idxs: np.ndarray) -> float:
@@ -215,34 +270,71 @@ def main():
 
     # Extract the city_area information
     train_x_2D, train_x_AREA, test_x_2D, test_x_AREA = extract_city_area_information(train_x, test_x)
+
+    # testing out different kernels using cross validation 
+    # for each model the asymetric cost gets calcualted
+    # the best model is selected based on the lowest cost
+    print("Testing different models")
+    model_selection(train_x_2D, train_y, train_x_AREA)
+    ## Results from Cross Validation ##
+    # results = {
+    #     'Kernel: Matern(length_scale=0.1, nu=0.5)': {
+    #         'mean cost': 11.931022772578737,
+    #         'list cost': [11.468749228218941, 15.267522885549964, 10.53074843724613, 10.45707053281433],
+    #         'optimal_thetas': [
+    #             {'length_scale': 0.3014541834488977, 'length_scale_bounds': (1e-05, 10000.0), 'nu': 0.5},
+    #             {'length_scale': 0.302358270235519, 'length_scale_bounds': (1e-05, 10000.0), 'nu': 0.5},
+    #             {'length_scale': 0.30001702370227934, 'length_scale_bounds': (1e-05, 10000.0), 'nu': 0.5},
+    #             {'length_scale': 0.30308471633582634, 'length_scale_bounds': (1e-05, 10000.0), 'nu': 0.5}
+    #         ]
+    #     },
+    #     'Kernel: Matern(length_scale=0.3, nu=0.5) + WhiteKernel(noise_level=1e-05)': {
+    #         'mean cost': 11.39944600833394, 
+    #         'list cost': [11.745888081882084, 11.623774770851654, 10.828675172268083], 
+    #         'optimal_thetas': [
+    #             {'k1': Matern(length_scale=0.294, nu=0.5), 'k2': WhiteKernel(noise_level=1e-07), 'k1__length_scale': 0.29438841035118585, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 0.5, 'k2__noise_level': 9.999999999999994e-08, 'k2__noise_level_bounds': (1e-07, 1e-05)}, 
+    #             {'k1': Matern(length_scale=0.292, nu=0.5), 'k2': WhiteKernel(noise_level=1e-07), 'k1__length_scale': 0.29179968803203643, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 0.5, 'k2__noise_level': 9.999999999999994e-08, 'k2__noise_level_bounds': (1e-07, 1e-05)}, 
+    #             {'k1': Matern(length_scale=0.296, nu=0.5), 'k2': WhiteKernel(noise_level=1e-07), 'k1__length_scale': 0.29577906767706413, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 0.5, 'k2__noise_level': 9.999999999999994e-08, 'k2__noise_level_bounds': (1e-07, 1e-05)}
+    #         ]
+    #     }, 
+    #     'Kernel: Matern(length_scale=0.1, nu=1.5) + WhiteKernel(noise_level=1e-05)': {
+    #         'mean cost': 418.8306625874107, 
+    #         'list cost': [11.346121889900397, 616.2924767937957, 628.8533890785361], 
+    #         'optimal_thetas': [
+    #             {'k1': Matern(length_scale=0.0537, nu=1.5), 'k2': WhiteKernel(noise_level=0.0052), 'k1__length_scale': 0.05366865396193882, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 1.5, 'k2__noise_level': 0.00519863026071358, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': Matern(length_scale=9.48e-05, nu=1.5), 'k2': WhiteKernel(noise_level=8.4e-05), 'k1__length_scale': 9.475482588170132e-05, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 1.5, 'k2__noise_level': 8.402133528108167e-05, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': Matern(length_scale=1.44e-05, nu=1.5), 'k2': WhiteKernel(noise_level=1e-07), 'k1__length_scale': 1.442884717817052e-05, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 1.5, 'k2__noise_level': 9.999999999999994e-08, 'k2__noise_level_bounds': (1e-07, 10.0)}
+    #         ]
+    #     }, 
+    #     'Kernel: Matern(length_scale=0.1, nu=2.5) + WhiteKernel(noise_level=1e-05)': {
+    #         'mean cost': 10.834847379393304, 
+    #         'list cost': [11.697149241686647, 10.559195024467218, 10.248197872026044], 
+    #         'optimal_thetas': [
+    #             {'k1': Matern(length_scale=0.0373, nu=2.5), 'k2': WhiteKernel(noise_level=0.00621), 'k1__length_scale': 0.037291804142309856, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 2.5, 'k2__noise_level': 0.0062063149510794835, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': Matern(length_scale=0.0372, nu=2.5), 'k2': WhiteKernel(noise_level=0.0064), 'k1__length_scale': 0.037234371851812276, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 2.5, 'k2__noise_level': 0.0063971413477872325, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': Matern(length_scale=0.0376, nu=2.5), 'k2': WhiteKernel(noise_level=0.00631), 'k1__length_scale': 0.037642314696362485, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 2.5, 'k2__noise_level': 0.006314885035097899, 'k2__noise_level_bounds': (1e-07, 10.0)}
+    #         ]
+    #     }, 
+    #     'Kernel: RBF(length_scale=1) + WhiteKernel(noise_level=1e-05)': {
+    #         'mean cost': 419.64297506557824, 
+    #         'list cost': [13.824773909383252, 616.2896104883516, 628.8145407989999], 
+    #         'optimal_thetas': [
+    #             {'k1': RBF(length_scale=0.0215), 'k2': WhiteKernel(noise_level=0.00848), 'k1__length_scale': 0.021489743145969378, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k2__noise_level': 0.008477610275267448, 'k2__noise_level_bounds': (1e-06, 10.0)}, 
+    #             {'k1': RBF(length_scale=1e-05), 'k2': WhiteKernel(noise_level=9.27e-05), 'k1__length_scale': 9.999999999999997e-06, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k2__noise_level': 9.27107137169707e-05, 'k2__noise_level_bounds': (1e-06, 10.0)}, 
+    #             {'k1': RBF(length_scale=1e-05), 'k2': WhiteKernel(noise_level=0.0001), 'k1__length_scale': 9.999999999999997e-06, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k2__noise_level': 0.00010039731903113554, 'k2__noise_level_bounds': (1e-06, 10.0)}
+    #         ]
+    #     }
+    # }
+
     # Fit the model
     print('Fitting model')
     model = Model()
-    model.train_x_area = train_x_AREA
     model.fitting_model(train_y,train_x_2D)
-    predictions, gp_mean, gp_std = model.make_predictions(model.test_x_2D, model.test_x_area)
-    cost = cost_function(model.test_y, predictions, model.test_x_area)
-
-    # find a suitable coefficient for gp_std which we could add to the predicition
-    # in order to ensure no underprediction
-    factor = 0
-    num_iterations = 30
-    for i in range(num_iterations):
-        predictions = np.where(model.test_x_area == 1, gp_mean + i*gp_std/num_iterations, gp_mean)
-        new_cost = cost_function(model.test_y, predictions, model.test_x_area)
-        if new_cost < cost:
-            cost = new_cost
-            factor = i/num_iterations
-            print(cost)
-            print("factor: ", factor)
-
 
     # Predict on the test features
     print('Predicting on test features')
     predictions = model.make_predictions(test_x_2D, test_x_AREA)
     print(predictions)
-
-    print(model.kernel.theta)
 
     if EXTENDED_EVALUATION:
         perform_extended_evaluation(model, output_dir='.')
