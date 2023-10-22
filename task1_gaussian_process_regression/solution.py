@@ -33,7 +33,7 @@ class Model(object):
         # TODO: Add custom initialization for your model here if necessary
         # kernel has been chosen based on the result of the 3-fold cross validation
         # hyperparameters have been found by maximising the marginal log liklihood
-        self.kernel = Matern(length_scale=0.037, nu=2.5) + WhiteKernel(noise_level=0.006)
+        self.kernel = Matern(length_scale=0.054, nu=1.5, length_scale_bounds=(1e-05, 100000.0)) + WhiteKernel(noise_level=0.00528, noise_level_bounds=(1e-07, 10.0))
         self.model = GaussianProcessRegressor(self.kernel, random_state=0, n_restarts_optimizer=1, normalize_y=True)
 
     def make_predictions(self, test_x_2D: np.ndarray, test_x_AREA: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -73,9 +73,6 @@ class Model(object):
 
         pass
 
-    def reduce_sample_size(train_x: np.ndarray, train_y: np.ndarray):
-        pass
-
 def model_selection(train_x: np.ndarray, train_y: np.ndarray, train_area: np.ndarray):
     # kernels to test
     kernels = [
@@ -83,7 +80,7 @@ def model_selection(train_x: np.ndarray, train_y: np.ndarray, train_area: np.nda
         Matern(nu=0.5, length_scale=0.3) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-7, 1e-5)),
         Matern(nu=1.5, length_scale=0.1) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-7, 1e1)),
         Matern(nu=2.5, length_scale=0.1) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-7, 1e1)),
-        RBF(length_scale=1.0) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-6, 1e1))
+        RBF(length_scale=1.0) + WhiteKernel(noise_level=1e-5, noise_level_bounds=(1e-7, 1e1))
     ]
 
     # initialising a 3-fold cross validator
@@ -99,7 +96,7 @@ def model_selection(train_x: np.ndarray, train_y: np.ndarray, train_area: np.nda
         for train_indices, test_indices in kf.split(train_x):
             print("Fold " + str(fold_counter))
             # initialising gaussian process regressor model with one of the specified kernels
-            model = GaussianProcessRegressor(kernel=k, n_restarts_optimizer=1, normalize_y=True)
+            model = GaussianProcessRegressor(kernel=k, n_restarts_optimizer=1, normalize_y=True, random_state=0)
 
             # collect the fold for training and testing
             train_x_2D = train_x[train_indices]
@@ -278,17 +275,18 @@ def main():
     model_selection(train_x_2D, train_y, train_x_AREA)
     ## Results from Cross Validation ##
     # results = {
-    #     'Kernel: Matern(length_scale=0.1, nu=0.5)': {
-    #         'mean cost': 11.931022772578737,
-    #         'list cost': [11.468749228218941, 15.267522885549964, 10.53074843724613, 10.45707053281433],
+    #     'Kernel: Matern(length_scale=0.3, nu=0.5)': 
+    #     {
+    #         'mean cost': 11.39948454309237, 
+    #         'list cost': [11.745918099136956, 11.623824607841748, 10.828710922298404], 
     #         'optimal_thetas': [
-    #             {'length_scale': 0.3014541834488977, 'length_scale_bounds': (1e-05, 10000.0), 'nu': 0.5},
-    #             {'length_scale': 0.302358270235519, 'length_scale_bounds': (1e-05, 10000.0), 'nu': 0.5},
-    #             {'length_scale': 0.30001702370227934, 'length_scale_bounds': (1e-05, 10000.0), 'nu': 0.5},
-    #             {'length_scale': 0.30308471633582634, 'length_scale_bounds': (1e-05, 10000.0), 'nu': 0.5}
+    #             {'length_scale': 0.2943865454401839, 'length_scale_bounds': (1e-05, 100000.0), 'nu': 0.5}, 
+    #             {'length_scale': 0.2918002701521217, 'length_scale_bounds': (1e-05, 100000.0), 'nu': 0.5}, 
+    #             {'length_scale': 0.29577726391272985, 'length_scale_bounds': (1e-05, 100000.0), 'nu': 0.5}
     #         ]
-    #     },
-    #     'Kernel: Matern(length_scale=0.3, nu=0.5) + WhiteKernel(noise_level=1e-05)': {
+    #     }, 
+    #     'Kernel: Matern(length_scale=0.3, nu=0.5) + WhiteKernel(noise_level=1e-05)': 
+    #     {
     #         'mean cost': 11.39944600833394, 
     #         'list cost': [11.745888081882084, 11.623774770851654, 10.828675172268083], 
     #         'optimal_thetas': [
@@ -297,31 +295,34 @@ def main():
     #             {'k1': Matern(length_scale=0.296, nu=0.5), 'k2': WhiteKernel(noise_level=1e-07), 'k1__length_scale': 0.29577906767706413, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 0.5, 'k2__noise_level': 9.999999999999994e-08, 'k2__noise_level_bounds': (1e-07, 1e-05)}
     #         ]
     #     }, 
-    #     'Kernel: Matern(length_scale=0.1, nu=1.5) + WhiteKernel(noise_level=1e-05)': {
-    #         'mean cost': 418.8306625874107, 
-    #         'list cost': [11.346121889900397, 616.2924767937957, 628.8533890785361], 
+    #     'Kernel: Matern(length_scale=0.1, nu=1.5) + WhiteKernel(noise_level=1e-05)': 
+    #     {
+    #         'mean cost': 10.632530863767704, 
+    #         'list cost': [11.34612123585776, 10.461970076031895, 10.089501279413454], 
     #         'optimal_thetas': [
-    #             {'k1': Matern(length_scale=0.0537, nu=1.5), 'k2': WhiteKernel(noise_level=0.0052), 'k1__length_scale': 0.05366865396193882, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 1.5, 'k2__noise_level': 0.00519863026071358, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
-    #             {'k1': Matern(length_scale=9.48e-05, nu=1.5), 'k2': WhiteKernel(noise_level=8.4e-05), 'k1__length_scale': 9.475482588170132e-05, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 1.5, 'k2__noise_level': 8.402133528108167e-05, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
-    #             {'k1': Matern(length_scale=1.44e-05, nu=1.5), 'k2': WhiteKernel(noise_level=1e-07), 'k1__length_scale': 1.442884717817052e-05, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 1.5, 'k2__noise_level': 9.999999999999994e-08, 'k2__noise_level_bounds': (1e-07, 10.0)}
+    #             {'k1': Matern(length_scale=0.0537, nu=1.5), 'k2': WhiteKernel(noise_level=0.0052), 'k1__length_scale': 0.053668645145904595, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 1.5, 'k2__noise_level': 0.005198630518695854, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': Matern(length_scale=0.0533, nu=1.5), 'k2': WhiteKernel(noise_level=0.00533), 'k1__length_scale': 0.05333984972671367, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 1.5, 'k2__noise_level': 0.005326642005857419, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': Matern(length_scale=0.054, nu=1.5), 'k2': WhiteKernel(noise_level=0.00528), 'k1__length_scale': 0.054008649491161825, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 1.5, 'k2__noise_level': 0.005280865082344792, 'k2__noise_level_bounds': (1e-07, 10.0)}
     #         ]
     #     }, 
-    #     'Kernel: Matern(length_scale=0.1, nu=2.5) + WhiteKernel(noise_level=1e-05)': {
-    #         'mean cost': 10.834847379393304, 
-    #         'list cost': [11.697149241686647, 10.559195024467218, 10.248197872026044], 
+    #     'Kernel: Matern(length_scale=0.1, nu=2.5) + WhiteKernel(noise_level=1e-05)': 
+    #     {
+    #         'mean cost': 10.83484473786235, 
+    #         'list cost': [11.697141428241018, 10.559194693811303, 10.248198091534732], 
     #         'optimal_thetas': [
-    #             {'k1': Matern(length_scale=0.0373, nu=2.5), 'k2': WhiteKernel(noise_level=0.00621), 'k1__length_scale': 0.037291804142309856, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 2.5, 'k2__noise_level': 0.0062063149510794835, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
-    #             {'k1': Matern(length_scale=0.0372, nu=2.5), 'k2': WhiteKernel(noise_level=0.0064), 'k1__length_scale': 0.037234371851812276, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 2.5, 'k2__noise_level': 0.0063971413477872325, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
-    #             {'k1': Matern(length_scale=0.0376, nu=2.5), 'k2': WhiteKernel(noise_level=0.00631), 'k1__length_scale': 0.037642314696362485, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 2.5, 'k2__noise_level': 0.006314885035097899, 'k2__noise_level_bounds': (1e-07, 10.0)}
+    #             {'k1': Matern(length_scale=0.0373, nu=2.5), 'k2': WhiteKernel(noise_level=0.00621), 'k1__length_scale': 0.03729185918765591, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 2.5, 'k2__noise_level': 0.0062063429422440685, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': Matern(length_scale=0.0372, nu=2.5), 'k2': WhiteKernel(noise_level=0.0064), 'k1__length_scale': 0.037234382780263545, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 2.5, 'k2__noise_level': 0.0063971441379809466, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': Matern(length_scale=0.0376, nu=2.5), 'k2': WhiteKernel(noise_level=0.00631), 'k1__length_scale': 0.03764235659619975, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k1__nu': 2.5, 'k2__noise_level': 0.006314895151428851, 'k2__noise_level_bounds': (1e-07, 10.0)}
     #         ]
     #     }, 
-    #     'Kernel: RBF(length_scale=1) + WhiteKernel(noise_level=1e-05)': {
-    #         'mean cost': 419.64297506557824, 
-    #         'list cost': [13.824773909383252, 616.2896104883516, 628.8145407989999], 
+    #     'Kernel: RBF(length_scale=1) + WhiteKernel(noise_level=1e-05)': 
+    #     {
+    #         'mean cost': 622.0409085220667, 
+    #         'list cost': [621.0075988027727, 616.2934915800565, 628.821635183371], 
     #         'optimal_thetas': [
-    #             {'k1': RBF(length_scale=0.0215), 'k2': WhiteKernel(noise_level=0.00848), 'k1__length_scale': 0.021489743145969378, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k2__noise_level': 0.008477610275267448, 'k2__noise_level_bounds': (1e-06, 10.0)}, 
-    #             {'k1': RBF(length_scale=1e-05), 'k2': WhiteKernel(noise_level=9.27e-05), 'k1__length_scale': 9.999999999999997e-06, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k2__noise_level': 9.27107137169707e-05, 'k2__noise_level_bounds': (1e-06, 10.0)}, 
-    #             {'k1': RBF(length_scale=1e-05), 'k2': WhiteKernel(noise_level=0.0001), 'k1__length_scale': 9.999999999999997e-06, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k2__noise_level': 0.00010039731903113554, 'k2__noise_level_bounds': (1e-06, 10.0)}
+    #             {'k1': RBF(length_scale=1e-05), 'k2': WhiteKernel(noise_level=8.21e-05), 'k1__length_scale': 9.999999999999997e-06, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k2__noise_level': 8.207869849551137e-05, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': RBF(length_scale=1e-05), 'k2': WhiteKernel(noise_level=8.09e-05), 'k1__length_scale': 9.999999999999997e-06, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k2__noise_level': 8.094872385980665e-05, 'k2__noise_level_bounds': (1e-07, 10.0)}, 
+    #             {'k1': RBF(length_scale=1e-05), 'k2': WhiteKernel(noise_level=8.21e-05), 'k1__length_scale': 9.999999999999997e-06, 'k1__length_scale_bounds': (1e-05, 100000.0), 'k2__noise_level': 8.207873938341723e-05, 'k2__noise_level_bounds': (1e-07, 10.0)}
     #         ]
     #     }
     # }
