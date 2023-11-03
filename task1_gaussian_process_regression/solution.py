@@ -66,7 +66,7 @@ class Model(object):
         :param train_y: Training pollution concentrations as a 1d NumPy float array of shape (NUM_SAMPLES,)
         """
 
-        # TODO: Fit your model here
+        # TODO: Fit your model here => Let's go!
         indices = self.preprocess_data(train_x_2D, train_y)
 
         self.gp.fit(train_x_2D[indices], train_y[indices])
