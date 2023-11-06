@@ -379,7 +379,7 @@ class SWAGInference(object):
 
                 # Stack the flattened tensors into a 2D deviation matrix
                 deviation_matrix = torch.stack(list(self._swag_deviation_matrix[name]), dim=-1).view(*param.shape, self.deviation_matrix_max_rank)
-                low_rank_cov = 1/np.sqrt(2*(self.deviation_matrix_max_rank - 1)) * torch.tensordot(deviation_matrix, z_2, dims=(len(param.shape)-1, [0]))
+                low_rank_cov = 1/np.sqrt(2*(self.deviation_matrix_max_rank - 1)) * torch.tensordot(deviation_matrix, z_2, dims=([len(deviation_matrix.shape)-1], [0]))
                 sampled_param += low_rank_cov
 
 
