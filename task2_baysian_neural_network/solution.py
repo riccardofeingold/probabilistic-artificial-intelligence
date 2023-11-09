@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 
 from util import draw_reliability_diagram, cost_function, setup_seeds, calc_calibration_curve
 
-EXTENDED_EVALUATION = False
+EXTENDED_EVALUATION = True
 """
 Set `EXTENDED_EVALUATION` to `True` in order to generate additional plots on validation data.
 """
@@ -167,7 +167,7 @@ class SWAGInference(object):
         # TODO(2): create additional attributes, e.g., for calibration
         self._prediction_threshold: float = 0.0  # this is an example, feel free to be creative
         self._swag_final_lr = 0.03
-        self.lr_decay_type = "linear" # "exponential"
+        self.lr_decay_type = "linear" # "exponential" "cyclical"
 
     def update_swag(self) -> None:
         """
@@ -232,7 +232,9 @@ class SWAGInference(object):
             epochs=self.swag_epochs,
             steps_per_epoch=len(loader),
             final_lr=self._swag_final_lr,
-            decay_type=self.lr_decay_type
+            decay_type=self.lr_decay_type,
+            decay_steps=1,
+            cycle_length=30
         )
 
         # TODO(1): Perform initialization for SWAG fitting✅
@@ -293,12 +295,15 @@ class SWAGInference(object):
         self._prediction_threshold = 2.0 / 3.0
 
         # TODO(2): perform additional calibration if desired.
+        # TODO: Implement Temperature Scaling see paper about calibration of NN
         #  Feel free to remove or change the prediction threshold.
         val_xs, val_is_snow, val_is_cloud, val_ys = validation_data.tensors
         assert val_xs.size() == (140, 3, 60, 60)  # N x C x H x W
         assert val_ys.size() == (140,)
         assert val_is_snow.size() == (140,)
         assert val_is_cloud.size() == (140,)
+
+        
 
     def predict_probabilities_swag(self, loader: torch.utils.data.DataLoader) -> torch.Tensor:
         """
@@ -317,11 +322,11 @@ class SWAGInference(object):
         # and perform inference with each network on all samples in loader.
         per_model_sample_predictions: list = []
         for _ in tqdm.trange(self.bma_samples, desc="Performing Bayesian model averaging"):
-            # TODO(1): Sample new parameters for self.network from the SWAG approximate posterior
+            # TODO(1): Sample new parameters for self.network from the SWAG approximate posterior✅
             # raise NotImplementedError("Sample network parameters")
             self.sample_parameters()
 
-            # TODO(1): Perform inference for all samples in `loader` using current model sample,
+            # TODO(1): Perform inference for all samples in `loader` using current model sample,✅
             #  and add the predictions to per_model_sample_predictions
             # raise NotImplementedError("Perform inference using current model")
             model_sample_predictions: list = []
@@ -342,7 +347,7 @@ class SWAGInference(object):
             for model_sample_predictions in per_model_sample_predictions
         )
 
-        # TODO(1): Average predictions from different model samples into bma_probabilities
+        # TODO(1): Average predictions from different model samples into bma_probabilities✅
         per_model_sample_predictions = [torch.softmax(predictions, dim=-1) for predictions in per_model_sample_predictions]
         # raise NotImplementedError("Aggregate predictions from model samples")
         bma_probabilities = torch.stack(per_model_sample_predictions).mean(dim=0)
@@ -628,7 +633,7 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
 
         This method should return a single float: the new learning rate.
         """
-        # TODO(2): Implement a custom schedule if desired
+        # TODO(2): Implement a custom schedule if desired✅
         if self.decay_type == "linear":
             new_lr = self.initial_lr - (self.initial_lr - self.final_lr)*(current_epoch / self.epochs)
         elif self.decay_type == "exponential":
@@ -636,6 +641,8 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         elif self.decay_type == "cyclical":
             # TODO Have a look at the SWA paper => three parameters cycle length, alpha_1 (initial lr) and alpha_2 (final lr)
             # it essentially decreases the learning rate linearly from alpha_1 to alpha_2
+            t = 1/self.cycle_length * (np.mod(current_epoch, self.cycle_length) + 1)
+            new_lr = (1 - t)*self.initial_lr + t * self.final_lr
             pass
         return new_lr
 
@@ -646,7 +653,9 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         epochs: int,
         steps_per_epoch: int,
         final_lr: float,
-        decay_type: str
+        decay_type: str,
+        cycle_length: int,
+        decay_steps: int
     ):
         self.epochs = epochs
         self.steps_per_epoch = steps_per_epoch
@@ -654,7 +663,8 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         self.final_lr = final_lr
         self.initial_lr = optimizer.param_groups[0]["lr"]
         self.decay_rate = optimizer.param_groups[0]["weight_decay"]
-        self.decay_steps = 1
+        self.decay_steps = decay_steps
+        self.cycle_length = cycle_length
 
         super().__init__(optimizer, last_epoch=-1, verbose=False)
 
