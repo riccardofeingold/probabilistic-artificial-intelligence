@@ -73,7 +73,7 @@ def main():
         train_xs=dataset_train.tensors[0],
         model_dir=model_dir,
     )
-    swag.fit(train_loader)
+    # swag.fit(train_loader)
     swag.calibrate(dataset_val)
 
     # fork_rng ensures that the evaluation does not change the rng state.
@@ -116,7 +116,7 @@ class SWAGInference(object):
         # inference_mode: InferenceMode = InferenceMode.MAP,
         inference_mode: InferenceMode = InferenceMode.SWAG_FULL,
         # TODO(2): optionally add/tweak hyperparameters
-        swag_epochs: int = 30,
+        swag_epochs: int = 40,
         swag_learning_rate: float = 0.045,
         swag_update_freq: int = 1,
         deviation_matrix_max_rank: int = 15,
@@ -239,8 +239,12 @@ class SWAGInference(object):
 
         # TODO(1): Perform initialization for SWAG fitting✅
         # raise NotImplementedError("Initialize SWAG fitting")
-        self._swag_mean = self._create_weight_copy()
-        self._swag_squared_mean = self._create_weight_copy()
+        # self._swag_mean = self._create_weight_copy()
+        # self._swag_squared_mean = self._create_weight_copy()
+        for name, param in self.network.named_parameters():
+            self._swag_mean[name] = param
+            self._swag_squared_mean[name] = torch.square(param)
+            
         self._swag_n_models = 0
 
         self.network.train()
@@ -302,9 +306,7 @@ class SWAGInference(object):
         assert val_ys.size() == (140,)
         assert val_is_snow.size() == (140,)
         assert val_is_cloud.size() == (140,)
-
         
-
     def predict_probabilities_swag(self, loader: torch.utils.data.DataLoader) -> torch.Tensor:
         """
         Perform Bayesian model averaging using your SWAG statistics and predict
