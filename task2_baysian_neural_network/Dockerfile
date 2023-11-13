@@ -9,5 +9,4 @@ ADD * /code/
 ADD pytransform /code/pytransform
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/code/pytransform
 WORKDIR /code
-USER root
 CMD python -u checker_client.py

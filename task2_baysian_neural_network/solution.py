@@ -31,14 +31,6 @@ Note that MAP inference can take a long time.
 
 
 def main():
-    # raise RuntimeError(
-    #     "This main() method is for illustrative purposes only"
-    #     " and will NEVER be called when running your solution to generate your submission file!\n"
-    #     "The checker always directly interacts with your SWAGInference class and evaluate method.\n"
-    #     "You can remove this exception for local testing, but be aware that any changes to the main() method"
-    #     " are ignored when generating your submission file."
-    # )
-
     data_dir = pathlib.Path.cwd()
     model_dir = pathlib.Path.cwd()
     output_dir = pathlib.Path.cwd()
@@ -73,7 +65,7 @@ def main():
         train_xs=dataset_train.tensors[0],
         model_dir=model_dir,
     )
-    # swag.fit(train_loader)
+    swag.fit(train_loader)
     swag.calibrate(dataset_val)
 
     # fork_rng ensures that the evaluation does not change the rng state.
@@ -113,9 +105,8 @@ class SWAGInference(object):
         model_dir: pathlib.Path,
         # TODO(1): change inference_mode to InferenceMode.SWAG_DIAGONAL✅
         # TODO(2): change inference_mode to InferenceMode.SWAG_FULL✅
-        # inference_mode: InferenceMode = InferenceMode.MAP,
         inference_mode: InferenceMode = InferenceMode.SWAG_FULL,
-        # TODO(2): optionally add/tweak hyperparameters
+        # TODO(2): optionally add/tweak hyperparameters✅
         swag_epochs: int = 40,
         swag_learning_rate: float = 0.045,
         swag_update_freq: int = 1,
@@ -154,20 +145,37 @@ class SWAGInference(object):
         #  as a dictionary that maps from weight name to values.
         #  Hint: you never need to consider the full vector of weights,
         #  but can always act on per-layer weights (in the format that _create_weight_copy() returns)
-        self._swag_mean = self._create_weight_copy()
-        self._swag_squared_mean = self._create_weight_copy()
+
+        # COMMENTS:
+        #  theta_mean is used to store the running average of the mean of the weights
+        #  After the fit_swag method is done, it will be equal to the theta_SWA
+        self._theta_mean = self._create_weight_copy()
+        #  theta_squared_mean stores the the running average of the mean of weights^2
+        self._theta_squared_mean = self._create_weight_copy()
+        #  stores the number of models
         self._swag_n_models: int = 0
 
         # Full SWAG
-        # TODO(2): create attributes for SWAG-diagonal
+        # TODO(2): create attributes for SWAG-diagonal✅
         #  Hint: check collections.deque
+
+        # COMMENTS:
+        #  this dictionary is used to collect all deviation matrices D_i
+        #  they get appended to a deque
+        #  In the sample_parameters method the D_hat matrix for the corresponding weights
         self._swag_deviation_matrix: dict = {}
 
         # Calibration, prediction, and other attributes
-        # TODO(2): create additional attributes, e.g., for calibration
-        self._prediction_threshold: float = 0.0  # this is an example, feel free to be creative
+        # TODO(2): create additional attributes, e.g., for calibration✅
+
+        # COMMENTS:
+        #  prediction_threshold will be set to 2/3 in the calibrate method. It is used in the decision rule,
+        #  to identify predicted labels as -1 if the predicted_probability is below 66.6%
+        self._prediction_threshold: float = 0.0
+        #  this is the final learning rate at which the rate scheduler will end up
         self._swag_final_lr = 0.03
-        self.lr_decay_type = "linear" # "exponential" "cyclical"
+        #  define the decay type of the learning rate => best performance using linear
+        self.lr_decay_type = "const_linear" # "exponential" "cyclical" "const_linear"
 
     def update_swag(self) -> None:
         """
@@ -181,18 +189,17 @@ class SWAGInference(object):
         for name, param in current_params.items():
             # TODO(1): update SWAG-diagonal attributes for weight `name` using `current_params` and `param`✅
             # Update the mean
-            self._swag_mean[name] = (self._swag_n_models * self._swag_mean[name] + param)/(self._swag_n_models + 1)
+            self._theta_mean[name] = (self._swag_n_models * self._theta_mean[name] + param)/(self._swag_n_models + 1)
 
             # Update the squared mean (variance component)
-            self._swag_squared_mean[name] = (self._swag_n_models * self._swag_squared_mean[name] + param*param)/(self._swag_n_models + 1)
-            
-            # raise NotImplementedError("Update SWAG-diagonal statistics")
+            self._theta_squared_mean[name] = (self._swag_n_models * self._theta_squared_mean[name] + param*param)/(self._swag_n_models + 1)
 
         # Full SWAG
         if self.inference_mode == InferenceMode.SWAG_FULL:
-            # TODO(2): update full SWAG attributes for weight `name` using `current_params` and `param`
+            # TODO(2): update full SWAG attributes for weight `name` using `current_params` and `param`✅
             for name, param in current_params.items():
-                deviation = (param - self._swag_mean[name]).flatten()
+                # Calculate the deviation matrix D_i
+                deviation = param - self._theta_mean[name]
 
                 # Initialize the deque for each parameter if it doesn't exist
                 if name not in self._swag_deviation_matrix:
@@ -202,8 +209,6 @@ class SWAGInference(object):
                 if len(self._swag_deviation_matrix[name]) == self.deviation_matrix_max_rank:
                     self._swag_deviation_matrix[name].popleft()
                 self._swag_deviation_matrix[name].append(deviation)
-
-            # raise NotImplementedError("Update full SWAG statistics")
 
     def fit_swag(self, loader: torch.utils.data.DataLoader) -> None:
         """
@@ -225,8 +230,12 @@ class SWAGInference(object):
         loss = torch.nn.CrossEntropyLoss(
             reduction="mean",
         )
-        # TODO(2): Update SWAGScheduler instantiation if you decided to implement a custom schedule.
+        # TODO(2): Update SWAGScheduler instantiation if you decided to implement a custom schedule.✅
         #  By default, this scheduler just keeps the initial learning rate given to `optimizer`.
+        # COMMENTS:
+        #  Learning rate decreases linearly from 0.045 to final_lr = 0.03
+        #  The decay_steps is used for how fast the exponetial approach decays
+        #  The cycle_length defines after how many iteration the learning rate jumps back to the intial lr
         lr_scheduler = SWAGScheduler(
             optimizer,
             epochs=self.swag_epochs,
@@ -238,13 +247,13 @@ class SWAGInference(object):
         )
 
         # TODO(1): Perform initialization for SWAG fitting✅
-        # raise NotImplementedError("Initialize SWAG fitting")
-        # self._swag_mean = self._create_weight_copy()
-        # self._swag_squared_mean = self._create_weight_copy()
+        # COMMENTS:
+        #  Setting the theta_mean and the theta_squared_mean equal to the networks param and square(param), respectively.
         for name, param in self.network.named_parameters():
-            self._swag_mean[name] = param
-            self._swag_squared_mean[name] = torch.square(param)
-            
+            self._theta_mean[name] = param
+            self._theta_squared_mean[name] = torch.square(param)
+        
+        #  setting number of models to zero
         self._swag_n_models = 0
 
         self.network.train()
@@ -277,11 +286,12 @@ class SWAGInference(object):
                     pbar.set_postfix(pbar_dict)
 
                 # TODO(1): Implement periodic SWAG updates using the attributes defined in __init__✅
+                # COMMENTS:
+                #  Priodic update of SWAG which is defined by the update_frequency
+                #  Since this frequency is set to 1 (in my code) the update SWAG method gets called every epoch
                 if epoch % self.swag_update_freq == 0:
                     self._swag_n_models = epoch / self.swag_update_freq
                     self.update_swag()
-
-                # raise NotImplementedError("Periodically update SWAG statistics")
 
     def calibrate(self, validation_data: torch.utils.data.Dataset) -> None:
         """
@@ -294,12 +304,11 @@ class SWAGInference(object):
             self._prediction_threshold = 0.0
             return
 
-        # TODO(1): pick a prediction threshold, either constant or adaptive.
-        #  The provided value should suffice to pass the easy baseline.
+        # TODO(1): pick a prediction threshold, either constant or adaptive.✅
+        # setting the threshold to 66.6%
         self._prediction_threshold = 2.0 / 3.0
 
-        # TODO(2): perform additional calibration if desired.
-        # TODO: Implement Temperature Scaling see paper about calibration of NN
+        # TODO(2): perform additional calibration if desired.✅
         #  Feel free to remove or change the prediction threshold.
         val_xs, val_is_snow, val_is_cloud, val_ys = validation_data.tensors
         assert val_xs.size() == (140, 3, 60, 60)  # N x C x H x W
@@ -325,19 +334,21 @@ class SWAGInference(object):
         per_model_sample_predictions: list = []
         for _ in tqdm.trange(self.bma_samples, desc="Performing Bayesian model averaging"):
             # TODO(1): Sample new parameters for self.network from the SWAG approximate posterior✅
-            # raise NotImplementedError("Sample network parameters")
+            # sampling the parameters from SWAG posterior approximation
             self.sample_parameters()
 
             # TODO(1): Perform inference for all samples in `loader` using current model sample,✅
             #  and add the predictions to per_model_sample_predictions
-            # raise NotImplementedError("Perform inference using current model")
+
+            # COMMENTS:
+            #  Storing the logits for each batch in the model_sample_predictions list
             model_sample_predictions: list = []
             for (batch_xs,) in loader:
                 with torch.no_grad():
-                    preds = self.network(batch_xs)
-                    model_sample_predictions.append(preds)
+                    logits = self.network(batch_xs)
+                    model_sample_predictions.append(logits)
             
-            # Combine predictions for all batches
+            #  Combine predictions for all batches
             model_sample_predictions = torch.cat(model_sample_predictions, dim=0)
             per_model_sample_predictions.append(model_sample_predictions)
 
@@ -350,8 +361,9 @@ class SWAGInference(object):
         )
 
         # TODO(1): Average predictions from different model samples into bma_probabilities✅
+        # First convert the logits to probabilities using the softmax
         per_model_sample_predictions = [torch.softmax(predictions, dim=-1) for predictions in per_model_sample_predictions]
-        # raise NotImplementedError("Aggregate predictions from model samples")
+        # then average the predictions
         bma_probabilities = torch.stack(per_model_sample_predictions).mean(dim=0)
 
         assert bma_probabilities.dim() == 2 and bma_probabilities.size(1) == 6  # N x C
@@ -367,35 +379,40 @@ class SWAGInference(object):
         # Instead of acting on a full vector of parameters, all operations can be done on per-layer parameters.
         for name, param in self.network.named_parameters():
             # SWAG-diagonal part
-            z_1 = torch.randn(param.size())
             # TODO(1): Sample parameter values for SWAG-diagonal✅
-            # raise NotImplementedError("Sample parameter for SWAG-diagonal")
-            current_mean = self._swag_mean[name]
-            current_std = torch.sqrt(self._swag_squared_mean[name] - current_mean*current_mean)
+            # COMMENTS:
+            #  z_1 randomly sampled vector of size param.size()
+            z_1 = torch.randn(param.size())
+            current_mean = self._theta_mean[name]
+            current_std = torch.sqrt(self._theta_squared_mean[name] - current_mean*current_mean)
             assert current_mean.size() == param.size() and current_std.size() == param.size()
 
             # Diagonal part
-            sampled_param = current_mean + 1/np.sqrt(2) * current_std * z_1
+            # if inference_mode is equal to DIAGONAL then our approximate posterior distribution is N(theta_swag, Sigma_diagonal)
+            if self.inference_mode == InferenceMode.SWAG_DIAGONAL:
+                sampled_param = current_mean + current_std * z_1
 
             # Full SWAG part
             if self.inference_mode == InferenceMode.SWAG_FULL:
-                # TODO(2): Sample parameter values for full SWAG
-                # raise NotImplementedError("Sample parameter for full SWAG")
-                # Sample parameter values for full SWAG
+                # TODO(2): Sample parameter values for full SWAG✅
+                # COMMENTS:
+                #  In this case we sample from an approximate posterior distribution N(theta_swa, 1/2 * Sigma_diagonal + 1/2 * 1/(K - 1) * D_hat*D_hat^T)
+                #  Sample parameter values for full SWAG
+                sampled_param = current_mean + 1/np.sqrt(2) * current_std * z_1
+                
+                #  get second random vector with length K
                 z_2 = torch.randn(self.deviation_matrix_max_rank)
 
-                # Stack the flattened tensors into a 2D deviation matrix
-                deviation_matrix = torch.stack(list(self._swag_deviation_matrix[name]), dim=-1).view(*param.shape, self.deviation_matrix_max_rank)
-                low_rank_cov = 1/np.sqrt(2*(self.deviation_matrix_max_rank - 1)) * torch.tensordot(deviation_matrix, z_2, dims=([len(deviation_matrix.shape)-1], [0]))
+                #  retrieve the deviation matrix from our collections.deque 
+                deviation_matrix = torch.stack(list(self._swag_deviation_matrix[name]), dim=-1)
+                low_rank_cov = 1/np.sqrt(2*(self.deviation_matrix_max_rank - 1)) * torch.matmul(deviation_matrix, z_2)
                 sampled_param += low_rank_cov
-
 
             # Modify weight value in-place; directly changing self.network
             param.data = sampled_param
 
         # TODO(1): Don't forget to update batch normalization statistics using self._update_batchnorm()✅
         #  in the appropriate place!
-        # raise NotImplementedError("Update batch normalization statistics for newly sampled network")
         self._update_batchnorm()
 
     def predict_labels(self, predicted_probabilities: torch.Tensor) -> torch.Tensor:
@@ -417,7 +434,7 @@ class SWAGInference(object):
         # return max_likelihood_labels
 
         # A bit better: use a threshold to decide whether to return a label or "don't know" (label -1)
-        # TODO(2): implement a different decision rule if desired
+        # TODO(2): implement a different decision rule if desired✅
         return torch.where(
             label_probabilities >= self._prediction_threshold,
             max_likelihood_labels,
@@ -641,14 +658,21 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         elif self.decay_type == "exponential":
             new_lr = self.initial_lr * (self.decay_rate ** (current_epoch / self.decay_steps))
         elif self.decay_type == "cyclical":
-            # TODO Have a look at the SWA paper => three parameters cycle length, alpha_1 (initial lr) and alpha_2 (final lr)
             # it essentially decreases the learning rate linearly from alpha_1 to alpha_2
+            # it is the same as mentioned in the paper: Averaging Weights Leads to Wider Optima and Better Generalization
             t = 1/self.cycle_length * (np.mod(current_epoch, self.cycle_length) + 1)
             new_lr = (1 - t)*self.initial_lr + t * self.final_lr
             pass
+        elif self.decay_type == "const_linear":
+            if current_epoch < 10:
+                new_lr = old_lr
+            else:
+                new_lr = self.initial_lr - (self.initial_lr - self.final_lr)*((current_epoch - 10) / (self.epochs - 10))
+        else:
+            new_lr = old_lr
         return new_lr
 
-    # TODO(2): Add and store additional arguments if you decide to implement a custom scheduler
+    # TODO(2): Add and store additional arguments if you decide to implement a custom scheduler✅
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
