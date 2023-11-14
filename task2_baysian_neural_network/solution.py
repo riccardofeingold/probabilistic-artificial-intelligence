@@ -243,7 +243,8 @@ class SWAGInference(object):
             final_lr=self._swag_final_lr,
             decay_type=self.lr_decay_type,
             decay_steps=1,
-            cycle_length=30
+            cycle_length=30,
+            start_epoch_decay=10
         )
 
         # TODO(1): Perform initialization for SWAG fitting✅
@@ -664,10 +665,10 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
             new_lr = (1 - t)*self.initial_lr + t * self.final_lr
             pass
         elif self.decay_type == "const_linear":
-            if current_epoch < 10:
+            if current_epoch < self.start_epoch_decay:
                 new_lr = old_lr
             else:
-                new_lr = self.initial_lr - (self.initial_lr - self.final_lr)*((current_epoch - 10) / (self.epochs - 10))
+                new_lr = self.initial_lr - (self.initial_lr - self.final_lr)*((current_epoch - self.start_epoch_decay) / (self.epochs - self.start_epoch_decay))
         else:
             new_lr = old_lr
         return new_lr
@@ -681,7 +682,8 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         final_lr: float,
         decay_type: str,
         cycle_length: int,
-        decay_steps: int
+        decay_steps: int,
+        start_epoch_decay: int
     ):
         self.epochs = epochs
         self.steps_per_epoch = steps_per_epoch
@@ -691,6 +693,7 @@ class SWAGScheduler(torch.optim.lr_scheduler.LRScheduler):
         self.decay_rate = optimizer.param_groups[0]["weight_decay"]
         self.decay_steps = decay_steps
         self.cycle_length = cycle_length
+        self.start_epoch_decay = start_epoch_decay
 
         super().__init__(optimizer, last_epoch=-1, verbose=False)
 
