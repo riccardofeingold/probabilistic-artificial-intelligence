@@ -175,7 +175,7 @@ class SWAGInference(object):
         #  this is the final learning rate at which the rate scheduler will end up
         self._swag_final_lr = 0.03
         #  define the decay type of the learning rate => best performance using linear
-        self.lr_decay_type = "linear" # "exponential" "cyclical" "const_linear"
+        self.lr_decay_type = "const_linear" # "exponential" "cyclical" "const_linear"
 
     def update_swag(self) -> None:
         """
