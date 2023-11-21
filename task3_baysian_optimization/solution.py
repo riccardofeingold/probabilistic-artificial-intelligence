@@ -2,6 +2,7 @@
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
 # import additional ...
+from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, DotProduct
 
@@ -27,9 +28,9 @@ class BO_algo():
         self.kernel_f_matern = Matern(nu=2.5, length_scale=self.length_scales[2])
         self.kernel_f_rbf = RBF(length_scale=self.length_scales[2])
         self.kernel_v_matern = DotProduct(sigma_0=0) + Matern(nu=2.5, length_scale=self.length_scales[2])
-        self.kernel_v_rbf = DotProduct(sigma_0=0) + RBF(length_scale=self.length_scales[2], length_scale_bounds=(0, 10))
-        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_matern, alpha=0.15)
-        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_matern, alpha=0.0001)
+        self.kernel_v_rbf = DotProduct(sigma_0=0) + RBF(length_scale=self.length_scales[2])
+        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_matern, alpha=0.15, optimizer=None, normalize_y=True, random_state=0)
+        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_matern, alpha=0.0001, optimizer=None, random_state=0)
 
         # attributes for acquisition function
         self.beta = 1
@@ -111,6 +112,15 @@ class BO_algo():
         x_f_next_ucb -= self.lambda_penalty * np.maximum(mean_v, 0)
         
         return x_f_next_ucb
+        # TODO: implement EI
+        # EI
+        # phi = norm(0, 1)
+        # constraint_dist = norm(mean_v, std_v)
+        # f_min = np.min([t["f"] for t in self.data_points])
+        # z = (f_min - mean_f) / std_f
+        # x_f_ei = std_f * (phi.cdf(z) * z + phi.pdf(z)) * constraint_dist.cdf(0) 
+
+        # return x_f_ei.item()  
 
     def add_data_point(self, x: float, f: float, v: float):
         """
@@ -126,16 +136,16 @@ class BO_algo():
             SA constraint func
         """
         # TODO: Add the observed data {x, f, v} to your model.
-        self.data_points.append((x, f, v))
+        self.data_points.append({"x": x, "f": f, "v": v})
         
         self.number_data_points += 1
 
-        x = np.array([t[0] for t in self.data_points])
-        y_f = np.array([t[1] for t in self.data_points])
-        y_v = np.array([t[2] for t in self.data_points])
+        x_values = np.array([t["x"] for t in self.data_points], dtype=np.float64)
+        y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
+        y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
         
-        self.gp_f.fit(x.reshape(-1, 1), y_f.reshape(-1, 1))
-        self.gp_v.fit(x.reshape(-1, 1), y_v.reshape(-1, 1))
+        self.gp_f.fit(x_values.reshape(-1, 1), y_f.reshape(-1, 1))
+        self.gp_v.fit(x_values.reshape(-1, 1), y_v.reshape(-1, 1))
 
     def get_solution(self):
         """
@@ -147,9 +157,9 @@ class BO_algo():
             the optimal solution of the problem
         """
         # TODO: Return your predicted safe optimum of f.
-        x = np.array([t[0] for t in self.data_points])
-        y_f = np.array([t[1] for t in self.data_points])
-        y_v = np.array([t[2] for t in self.data_points])
+        x = np.array([t["x"] for t in self.data_points], dtype=np.float64)
+        y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
+        y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
         
         feasible_mask = y_v < self.kappa
         feasible_y_f = y_f[feasible_mask]
@@ -168,19 +178,8 @@ class BO_algo():
         plot_recommendation: bool
             Plots the recommended point if True.
         """
+        # TODO: Add plotting code
         pass
-
-    # Implement my own gaussian process class
-    class GP():
-        def __init__(self, kernel: str) -> None:
-            pass
-        
-        def kernel(self, x):
-
-            pass
-
-        def plot(self):
-            pass
 
 
 # ---
