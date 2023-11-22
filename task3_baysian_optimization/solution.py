@@ -5,7 +5,7 @@ from scipy.optimize import fmin_l_bfgs_b
 from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, DotProduct, ConstantKernel
-
+import matplotlib.pyplot as plt
 
 # global variables
 DOMAIN = np.array([[0, 10]])  # restrict \theta in [0, 10]
@@ -32,7 +32,7 @@ class BO_algo():
         self.kernel_v_rbf = self.linear_kernel + ConstantKernel(np.sqrt(2)) * RBF(length_scale=0.5)
 
         self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_rbf, alpha=0.15, optimizer=None, random_state=0)
-        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_rbf, alpha=0.0001, optimizer=None, random_state=0)
+        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_matern, alpha=0.0001, optimizer=None, random_state=0)
 
         # attributes for acquisition function
         self.beta = 1
@@ -120,11 +120,20 @@ class BO_algo():
         # EI
         # epsilon = 0.5
         # phi = norm(0, 1)
-        # constraint_dist = norm(mean_v, std_v)
-        # f_max = np.max([t["f"] for t in self.data_points])
+        # # constraint_dist = norm(mean_v, std_v)
+        # x = np.array([t["x"] for t in self.data_points], dtype=np.float64)
+        # y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
+        # y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
+        
+        # feasible_mask = y_v < self.kappa
+        # feasible_y_f = y_f[feasible_mask]
+        
+        # max_index = np.argmax(feasible_y_f)
+        # f_max = y_f[max_index]
         # z = (mean_f - f_max - epsilon) / std_f
         # # x_f_ei = std_f * (phi.cdf(z) * z + phi.pdf(z)) * constraint_dist.cdf(0) 
-        # x_f_ei = ((mean_f - f_max - epsilon)*phi.cdf(z) + std_f*phi.pdf(z)) * constraint_dist.cdf(0)
+        # # x_f_ei = ((mean_f - f_max - epsilon)*phi.cdf(z) + std_f*phi.pdf(z)) * constraint_dist.cdf(0)
+        # x_f_ei = ((mean_f - f_max - epsilon)*phi.cdf(z) + std_f*phi.pdf(z)) - self.lambda_penalty * np.maximum(mean_v, 0)
         # return x_f_ei.item()  
 
     def add_data_point(self, x: float, f: float, v: float):
@@ -173,6 +182,8 @@ class BO_algo():
         
         max_index = np.argmax(feasible_y_f)
         x_optimal = np.array(feasible_x[max_index])
+
+        # self.plot()
                 
         return x_optimal
         
@@ -185,6 +196,48 @@ class BO_algo():
             Plots the recommended point if True.
         """
         # TODO: Add plotting code
+        # Assume gp_f and gp_v are your trained Gaussian Process models for the objective and constraint
+        # Let's also assume DOMAIN is your domain of interest, for example, np.array([[0, 10]])
+        x = np.atleast_2d(np.linspace(DOMAIN[0, 0], DOMAIN[0, 1], 1000)).T
+
+        # Predictions for objective and constraint functions
+        y_pred_f, sigma_f = self.gp_f.predict(x, return_std=True)
+        y_pred_v, sigma_v = self.gp_v.predict(x, return_std=True)
+
+        # Find the optimal point
+        opt_idx = np.argmax(y_pred_f)
+        opt_point = x[opt_idx]
+        opt_value = y_pred_f[opt_idx]
+
+        # Plotting
+        fig, axs = plt.subplots(2, 1, figsize=(10, 8))
+
+        # Objective function plot
+        axs[0].fill_between(x.ravel(), y_pred_f.squeeze() - sigma_f, y_pred_f.squeeze() + sigma_f, alpha=0.1, color='k')
+        axs[0].plot(x, y_pred_f.squeeze(), 'k', lw=1, label='Mean objective')
+        axs[0].scatter(opt_point, opt_value, c='red', s=50, label='Optimal point')
+        axs[0].set_title('Objective Function Posterior')
+        axs[0].legend()
+
+        # Constraint function plot
+        axs[1].fill_between(x.ravel(), y_pred_v.squeeze() - sigma_v, y_pred_v.squeeze() + sigma_v, alpha=0.1, color='k')
+        axs[1].plot(x, y_pred_v, 'k', lw=1, label='Mean constraint')
+        axs[1].axhline(y=SAFETY_THRESHOLD, color='r', linestyle='--', label='Safety threshold')
+        axs[1].fill_between(x.ravel(), y_pred_v.squeeze() - sigma_v, SAFETY_THRESHOLD, where=y_pred_v.squeeze() - sigma_v <= SAFETY_THRESHOLD, color='green', alpha=0.3, label='Safe region')
+        axs[1].scatter(opt_point, self.gp_v.predict(opt_point.reshape(1, -1)), c='red', s=50, label='Optimal point')
+        axs[1].set_title('Constraint Function Posterior')
+        axs[1].legend()
+
+        # Set common labels
+        for ax in axs:
+            ax.set_xlabel('Input domain')
+            ax.set_ylabel('Output')
+            ax.grid(True)
+
+        # Show plot
+        plt.tight_layout()
+        # plt.show()
+        plt.savefig("test.pdf")
         pass
 
 
