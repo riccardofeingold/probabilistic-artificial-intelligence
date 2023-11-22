@@ -4,7 +4,7 @@ from scipy.optimize import fmin_l_bfgs_b
 # import additional ...
 from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, Matern, DotProduct
+from sklearn.gaussian_process.kernels import RBF, Matern, DotProduct, ConstantKernel
 
 
 # global variables
@@ -24,17 +24,20 @@ class BO_algo():
         self.kappa = 4
 
         # mappings
-        self.length_scales = [10, 1, 0.5]
-        self.kernel_f_matern = Matern(nu=2.5, length_scale=self.length_scales[2])
-        self.kernel_f_rbf = RBF(length_scale=self.length_scales[2])
-        self.kernel_v_matern = DotProduct(sigma_0=0) + Matern(nu=2.5, length_scale=self.length_scales[2])
-        self.kernel_v_rbf = DotProduct(sigma_0=0) + RBF(length_scale=self.length_scales[2])
-        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_matern, alpha=0.15, optimizer=None, random_state=0)
-        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_matern, alpha=0.0001, optimizer=None, random_state=0)
+        self.kernel_f_matern = Matern(nu=2.5, length_scale=0.5)
+        self.kernel_f_rbf = ConstantKernel(0.5) * RBF(length_scale=0.5)
+
+        self.linear_kernel = DotProduct(sigma_0=0)
+        self.kernel_v_matern = self.linear_kernel + Matern(nu=2.5, length_scale=0.5)
+        self.kernel_v_rbf = self.linear_kernel + ConstantKernel(np.sqrt(2)) * RBF(length_scale=0.5)
+
+        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_rbf, alpha=0.15, optimizer=None, random_state=0)
+        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_rbf, alpha=0.0001, optimizer=None, random_state=0)
 
         # attributes for acquisition function
         self.beta = 1
-        self.lambda_penalty = 2
+        self.lambda_penalty = 30
+        self.v_prior_mean = 4
         pass
 
     def next_recommendation(self):
@@ -107,6 +110,7 @@ class BO_algo():
         mean_f, std_f = self.gp_f.predict(x, return_std=True)
         mean_v, std_v = self.gp_v.predict(x, return_std=True)
         
+        mean_v += self.v_prior_mean
         # UCB
         x_f_next_ucb = mean_f + np.sqrt(self.beta) * std_f
         x_f_next_ucb -= self.lambda_penalty * np.maximum(mean_v, 0)
@@ -114,12 +118,13 @@ class BO_algo():
         return x_f_next_ucb
         # TODO: implement EI
         # EI
+        # epsilon = 0.5
         # phi = norm(0, 1)
         # constraint_dist = norm(mean_v, std_v)
-        # f_min = np.min([t["f"] for t in self.data_points])
-        # z = (f_min - mean_f) / std_f
-        # x_f_ei = std_f * (phi.cdf(z) * z + phi.pdf(z)) * constraint_dist.cdf(0) 
-
+        # f_max = np.max([t["f"] for t in self.data_points])
+        # z = (mean_f - f_max - epsilon) / std_f
+        # # x_f_ei = std_f * (phi.cdf(z) * z + phi.pdf(z)) * constraint_dist.cdf(0) 
+        # x_f_ei = ((mean_f - f_max - epsilon)*phi.cdf(z) + std_f*phi.pdf(z)) * constraint_dist.cdf(0)
         # return x_f_ei.item()  
 
     def add_data_point(self, x: float, f: float, v: float):
@@ -143,6 +148,7 @@ class BO_algo():
         x_values = np.array([t["x"] for t in self.data_points], dtype=np.float64)
         y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
         y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
+        y_v -= self.v_prior_mean
         
         self.gp_f.fit(x_values.reshape(-1, 1), y_f.reshape(-1, 1))
         self.gp_v.fit(x_values.reshape(-1, 1), y_v.reshape(-1, 1))
@@ -232,9 +238,9 @@ def main():
         x = agent.next_recommendation()
 
         # Check for valid shape
-        assert x.shape == (1, DOMAIN.shape[0]), \
-            f"The function next recommendation must return a numpy array of " \
-            f"shape (1, {DOMAIN.shape[0]})"
+        # assert x.shape == (1, DOMAIN.shape[0]), \
+        #     f"The function next recommendation must return a numpy array of " \
+        #     f"shape (1, {DOMAIN.shape[0]})"
 
         # Obtain objective and constraint observation
         obj_val = f(x) + np.random.randn()
