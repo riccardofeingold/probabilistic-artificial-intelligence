@@ -55,11 +55,21 @@ class BO_algo():
         # optimize_acquisition_function() defined below.
 
         if self.number_data_points == 0:
-            next_point = np.random.uniform(0, 10)
+            # next_point = np.random.uniform(0, 10)
+            next_point = np.random.choice([0, 1, 2, 3, 4, 5, 6, 7, 9, 10])
         else:
             next_point = self.optimize_acquisition_function()
+            # d = self.get_distance(next_point)
+            
+            # if d <= 0.01:
+            #     next_point = np.random.uniform(0, 10)
             
         return np.array(next_point).reshape(-1, 1)
+
+    def get_distance(self, x):
+        prev_points = np.array([t["x"] for t in self.data_points])
+        distance = np.max([np.abs(x - p) for p in prev_points])
+        return distance
 
     def optimize_acquisition_function(self):
         """Optimizes the acquisition function defined below (DO NOT MODIFY).
