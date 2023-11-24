@@ -6,6 +6,7 @@ from scipy.stats import norm
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, DotProduct, ConstantKernel
 import matplotlib.pyplot as plt
+import os
 
 # global variables
 DOMAIN = np.array([[0, 10]])  # restrict \theta in [0, 10]
@@ -30,7 +31,7 @@ class BO_algo():
         self.kernel_v_matern = DotProduct(sigma_0=0) + Matern(nu=2.5, length_scale=0.5, length_scale_bounds=(0.5, 10))
         self.kernel_v_rbf = DotProduct(sigma_0=0) + ConstantKernel(np.sqrt(2)) * RBF(length_scale=0.5, length_scale_bounds=(0.5, 10))
 
-        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_matern, alpha=0.15, optimizer=None, random_state=0)
+        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_rbf, alpha=0.15, optimizer=None, random_state=0)
         self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_matern, alpha=0.0001, optimizer=None, random_state=0)
 
         # attributes for acquisition function
@@ -39,6 +40,9 @@ class BO_algo():
         self.v_prior_mean = 4
         self.af_type = "ucb"
         self.PLOTS = False
+        
+        # fixed the randomnes
+        np.random.seed(0)
         pass
 
     def next_recommendation(self):
@@ -60,10 +64,10 @@ class BO_algo():
         else:
             next_point = self.optimize_acquisition_function()
             # if self.number_data_points % 5 == 0:
-            # d = self.get_distance(next_point)
-            
-            # if d <= 0.01:
-            #     next_point = np.random.uniform(0, 10)
+            #     d = self.get_distance(next_point)
+                
+            #     if d <= 0.1:
+            #         next_point = np.random.uniform(0, 10)
             
         return np.array(next_point).reshape(-1, 1)
 
@@ -118,8 +122,8 @@ class BO_algo():
         """
         x = np.atleast_2d(x)
         # TODO: Implement the acquisition function you want to optimize.
-        mean_f, std_f = self.gp_f.predict(x, return_std=True)
-        mean_v, std_v = self.gp_v.predict(x, return_std=True)
+        mean_f, std_f = self.gp_f.predict(x.reshape(-1, 1), return_std=True)
+        mean_v, std_v = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
         
         # mean_v += self.v_prior_mean
         # UCB
@@ -149,9 +153,9 @@ class BO_algo():
                 
             z = (f_max - mean_f - epsilon) / std_f
             x_f_ei = std_f * (phi.cdf(z) * z + phi.pdf(z)) * constraint_dist.cdf(SAFETY_THRESHOLD) 
-            # x_f_ei = ((mean_f - f_max - epsilon)*phi.cdf(z) + std_f*phi.pdf(z)) * constraint_dist.cdf(0)
-            # x_f_ei = ((f_max - mean_f - epsilon)*phi.cdf(z) + std_f*phi.pdf(z)) - self.lambda_penalty * np.maximum(mean_v, 0)
+            
             return x_f_ei.item()
+        
         elif self.af_type == "ts":
             sample_f = self.gp_f.sample_y(x)
             sample_v = self.gp_v.sample_y(x)
@@ -178,6 +182,10 @@ class BO_algo():
             z = (mean_f - f_max - epsilon) / mean_f
             return phi.cdf(z) * constraint.cdf(SAFETY_THRESHOLD)
 
+    def constraint_function(self, x, v):
+        _, std = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
+        return norm.cdf(SAFETY_THRESHOLD, v, 0.0001)
+    
     def add_data_point(self, x: float, f: float, v: float):
         """
         Add data points to the model.
@@ -214,23 +222,31 @@ class BO_algo():
             the optimal solution of the problem
         """
         # TODO: Return your predicted safe optimum of f.
-        x = np.array([t["x"] for t in self.data_points], dtype=np.float64)
-        y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
-        y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
+        self.x = np.array([t["x"] for t in self.data_points], dtype=np.float64)
+        self.y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
+        self.y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
         
-        feasible_mask = y_v < SAFETY_THRESHOLD
-        feasible_y_f = y_f[feasible_mask]
-        feasible_x = x[feasible_mask]
+        self.prob_v = np.array([self.constraint_function(value_x, value_v) for value_x, value_v in zip(self.x, self.y_v)])
+        feasible_mask = self.prob_v >= 0.95
+        feasible_v = self.y_v[feasible_mask]
+        
+        feasible_y_f = self.y_f[feasible_mask]
+        feasible_x = self.x[feasible_mask]
         
         max_index = np.argmax(feasible_y_f)
-        x_optimal = np.array(feasible_x[max_index])
-
-        # self.plot()
+        self.v_optimal = feasible_v[max_index]
+        self.x_optimal = feasible_x[max_index]
+        self.y_optimal = feasible_y_f[max_index]
         
+        self.plot()
+        
+        print("Initial safe point: ", self.x[0])
+        print("Est. optimal value: ", self.x_optimal)
+        print("Diff: ", np.abs(self.x[0] - self.x_optimal))
         # print("F params: ", self.gp_f.kernel_.get_params())
         # print("v params: ", self.gp_v.kernel_.get_params())
          
-        return x_optimal
+        return self.x_optimal
         
     def plot(self, plot_recommendation: bool = True):
         """Plot objective and constraint posterior for debugging (OPTIONAL).
@@ -240,7 +256,6 @@ class BO_algo():
         plot_recommendation: bool
             Plots the recommended point if True.
         """
-        # TODO: Add plotting code
         # Assume gp_f and gp_v are your trained Gaussian Process models for the objective and constraint
         # Let's also assume DOMAIN is your domain of interest, for example, np.array([[0, 10]])
         x = np.atleast_2d(np.linspace(DOMAIN[0, 0], DOMAIN[0, 1], 1000)).T
@@ -260,7 +275,9 @@ class BO_algo():
         # Objective function plot
         axs[0].fill_between(x.ravel(), y_pred_f.squeeze() - sigma_f, y_pred_f.squeeze() + sigma_f, alpha=0.1, color='k')
         axs[0].plot(x, y_pred_f.squeeze(), 'k', lw=1, label='Mean objective')
+        axs[0].scatter(self.x, self.y_f, c='black', s=50, label='Other data points')
         axs[0].scatter(opt_point, opt_value, c='red', s=50, label='Optimal point')
+        axs[0].scatter(self.x_optimal, self.y_optimal, c='blue', s=50, label='Estimated Optimal Point')
         axs[0].set_title('Objective Function Posterior')
         axs[0].legend()
 
@@ -269,7 +286,9 @@ class BO_algo():
         axs[1].plot(x, y_pred_v, 'k', lw=1, label='Mean constraint')
         axs[1].axhline(y=SAFETY_THRESHOLD, color='r', linestyle='--', label='Safety threshold')
         axs[1].fill_between(x.ravel(), y_pred_v.squeeze() - sigma_v, SAFETY_THRESHOLD, where=y_pred_v.squeeze() - sigma_v <= SAFETY_THRESHOLD, color='green', alpha=0.3, label='Safe region')
+        axs[1].scatter(self.x, self.y_v, c='black', s=50, label='Other data points')
         axs[1].scatter(opt_point, self.gp_v.predict(opt_point.reshape(1, -1)), c='red', s=50, label='Optimal point')
+        axs[1].scatter(self.x_optimal, self.v_optimal, c='blue', s=50, label='Estimated Optimal Point')
         axs[1].set_title('Constraint Function Posterior')
         axs[1].legend()
 
@@ -282,7 +301,17 @@ class BO_algo():
         # Show plot
         plt.tight_layout()
         # plt.show()
-        plt.savefig("test.pdf")
+        counter = 1
+        extension = ".pdf"
+        filename = f"plots_{counter}{extension}"
+        full_path = os.path.join("/results/plots", filename)
+
+        while os.path.exists(full_path):
+            counter += 1
+            filename = f"plots_{counter}{extension}"
+            full_path = os.path.join("/results/plots", filename)
+
+        plt.savefig(full_path)
         pass
 
 
