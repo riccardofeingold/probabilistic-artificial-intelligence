@@ -38,7 +38,7 @@ class BO_algo():
         self.beta = 1
         self.lambda_penalty = 30
         self.v_prior_mean = 4
-        self.af_type = "ucb"
+        self.af_type = "ei"
         self.epsilon = 0.01
         # fixed the randomnes
         np.random.seed(42)
@@ -198,7 +198,6 @@ class BO_algo():
         mean_v, std_v = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
 
         x_f_next_ucb = mean_f + np.sqrt(self.beta) * std_f
-        #TODO: test new penalty version
         x_f_next_ucb -= self.lambda_penalty * np.maximum(mean_v, 0)
 
         return x_f_next_ucb
