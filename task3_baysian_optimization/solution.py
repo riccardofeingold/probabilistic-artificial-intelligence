@@ -211,7 +211,7 @@ class BO_algo():
         z = (self.y_optimal - mean_f - self.epsilon) / std_f
         prob_v = norm.cdf(SAFETY_THRESHOLD, mean_v, std_v)
         # x_f_ei = std_f * (norm.cdf(z, 0, 1) * z + norm.pdf(z, 0, 1)) * prob_v
-        if prob_v >= 0.998:
+        if prob_v >= 0.998 and False:
             x_f_ei = std_f * (norm.cdf(z, 0, 1) * z + norm.pdf(z, 0, 1)) * prob_v
             x_f_ei = self.UCB(x)
         else:
