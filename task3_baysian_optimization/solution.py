@@ -31,18 +31,17 @@ class BO_algo():
         self.kernel_v_matern = DotProduct(sigma_0=0) + Matern(nu=2.5, length_scale=0.5, length_scale_bounds=(0.5, 10))
         self.kernel_v_rbf = DotProduct(sigma_0=0) + ConstantKernel(np.sqrt(2)) * RBF(length_scale=0.5, length_scale_bounds=(0.5, 10))
 
-        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_rbf, alpha=0.15, optimizer=None, random_state=0)
-        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_matern, alpha=0.0001, optimizer=None, random_state=0)
+        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_rbf, alpha=0.15**2, optimizer=None, random_state=0)
+        self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_matern, alpha=0.0001**2, optimizer=None, random_state=0)
 
         # attributes for acquisition function
         self.beta = 1
         self.lambda_penalty = 30
         self.v_prior_mean = 4
         self.af_type = "ucb"
-        self.PLOTS = False
-        
+        self.epsilon = 0.01
         # fixed the randomnes
-        np.random.seed(0)
+        np.random.seed(42)
         pass
 
     def next_recommendation(self):
@@ -63,18 +62,24 @@ class BO_algo():
             next_point = np.random.uniform(0, 10)
         else:
             next_point = self.optimize_acquisition_function()
-            # if self.number_data_points % 5 == 0:
-            #     d = self.get_distance(next_point)
-                
-            #     if d <= 0.1:
-            #         next_point = np.random.uniform(0, 10)
+
+            # distances = self.distances(next_point, 10)
+            # counter = 0
+            # for d in distances:
+            #     if d < 0.1:
+            #         counter += 1
+            
+            # if counter > 4:
+            #     noise = np.random.uniform(-1, 1)
+            #     if noise >= 0:
+            #         noise_clipped = np.clip(noise, 0.1, 1)
+            #     else:
+            #         noise_clipped = np.clip(noise, -0.1, -1)
+
+            #     next_point += noise_clipped
+            #     next_point = np.clip(noise_clipped, 0, 10)
             
         return np.array(next_point).reshape(-1, 1)
-
-    def get_distance(self, x):
-        prev_points = np.array([t["x"] for t in self.data_points[-6:]])
-        distance = np.max([np.abs(x - p) for p in prev_points])
-        return distance
 
     def optimize_acquisition_function(self):
         """Optimizes the acquisition function defined below (DO NOT MODIFY).
@@ -122,69 +127,13 @@ class BO_algo():
         """
         x = np.atleast_2d(x)
         # TODO: Implement the acquisition function you want to optimize.
-        mean_f, std_f = self.gp_f.predict(x.reshape(-1, 1), return_std=True)
-        mean_v, std_v = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
         
-        # mean_v += self.v_prior_mean
-        # UCB
         if self.af_type == "ucb":
-            x_f_next_ucb = mean_f + np.sqrt(self.beta) * std_f
-            x_f_next_ucb -= self.lambda_penalty * np.maximum(mean_v, 0)
-            
-            return x_f_next_ucb
+            return self.UCB(x)
         elif self.af_type == "ei":
-            
-            # EI
-            epsilon = 0.01
-            phi = norm(0, 1)
-            constraint_dist = norm(mean_v, std_v)
-            if self.PLOTS: 
-                x = np.array([t["x"] for t in self.data_points], dtype=np.float64)
-                y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
-                y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
-                
-                feasible_mask = y_v < SAFETY_THRESHOLD
-                feasible_y_f = y_f[feasible_mask]
-                
-                max_index = np.argmax(feasible_y_f)
-                f_max = y_f[max_index]
-            else:
-                f_max = self.get_solution()
-                
-            z = (f_max - mean_f - epsilon) / std_f
-            x_f_ei = std_f * (phi.cdf(z) * z + phi.pdf(z)) * constraint_dist.cdf(SAFETY_THRESHOLD) 
-            
-            return x_f_ei.item()
-        
+            return self.EI(x)
         elif self.af_type == "ts":
-            sample_f = self.gp_f.sample_y(x)
-            sample_v = self.gp_v.sample_y(x)
-            # TODO: check if constraint is correctly applied
-            return (sample_f - self.lambda_penalty * np.maximum(sample_v, 0)).item()
-            
-        elif self.af_type == "pi":
-            if self.PLOTS: 
-                x = np.array([t["x"] for t in self.data_points], dtype=np.float64)
-                y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
-                y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
-                
-                feasible_mask = y_v < SAFETY_THRESHOLD
-                feasible_y_f = y_f[feasible_mask]
-                
-                max_index = np.argmax(feasible_y_f)
-                f_max = y_f[max_index]
-            else:
-                f_max = self.get_solution()
-            
-            phi = norm(0, 1)
-            constraint = norm(mean_v, std_v)
-            
-            z = (mean_f - f_max - epsilon) / mean_f
-            return phi.cdf(z) * constraint.cdf(SAFETY_THRESHOLD)
-
-    def constraint_function(self, x, v):
-        _, std = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
-        return norm.cdf(SAFETY_THRESHOLD, v, 0.0001)
+            return self.TS(x)
     
     def add_data_point(self, x: float, f: float, v: float):
         """
@@ -207,7 +156,6 @@ class BO_algo():
         x_values = np.array([t["x"] for t in self.data_points], dtype=np.float64)
         y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
         y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
-        # y_v -= self.v_prior_mean
         
         self.gp_f.fit(x_values.reshape(-1, 1), y_f.reshape(-1, 1))
         self.gp_v.fit(x_values.reshape(-1, 1), y_v.reshape(-1, 1))
@@ -222,32 +170,70 @@ class BO_algo():
             the optimal solution of the problem
         """
         # TODO: Return your predicted safe optimum of f.
+        self._get_solution()
+        self.plot()
+
+        return self.x_optimal
+    
+    def _get_solution(self):
         self.x = np.array([t["x"] for t in self.data_points], dtype=np.float64)
         self.y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
         self.y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
         
-        self.prob_v = np.array([self.constraint_function(value_x, value_v) for value_x, value_v in zip(self.x, self.y_v)])
-        feasible_mask = self.prob_v >= 0.95
+        # self.prob_v = np.array([self.cdf_of_constraint_function(value_x, value_v) for value_x, value_v in zip(self.x, self.y_v)])
+        # feasible_mask = self.prob_v >= 0.95
+        feasible_mask = self.y_v < SAFETY_THRESHOLD
         feasible_v = self.y_v[feasible_mask]
         
         feasible_y_f = self.y_f[feasible_mask]
         feasible_x = self.x[feasible_mask]
         
         max_index = np.argmax(feasible_y_f)
-        self.v_optimal = feasible_v[max_index]
         self.x_optimal = feasible_x[max_index]
+        self.v_optimal = feasible_v[max_index]
         self.y_optimal = feasible_y_f[max_index]
+
+    def UCB(self, x):
+        mean_f, std_f = self.gp_f.predict(x.reshape(-1, 1), return_std=True)
+        mean_v, std_v = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
+
+        x_f_next_ucb = mean_f + np.sqrt(self.beta) * std_f
+        #TODO: test new penalty version
+        x_f_next_ucb -= self.lambda_penalty * np.maximum(mean_v, 0)
+
+        return x_f_next_ucb
+    
+    def EI(self, x):
+        mean_f, std_f = self.gp_f.predict(x.reshape(-1, 1), return_std=True)
+        mean_v, std_v = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
+
+        self._get_solution()
+            
+        z = (self.y_optimal - mean_f - self.epsilon) / std_f
+        prob_v = norm.cdf(SAFETY_THRESHOLD, mean_v, std_v)
+        # x_f_ei = std_f * (norm.cdf(z, 0, 1) * z + norm.pdf(z, 0, 1)) * prob_v
+        if prob_v >= 0.998:
+            x_f_ei = std_f * (norm.cdf(z, 0, 1) * z + norm.pdf(z, 0, 1)) * prob_v
+            x_f_ei = self.UCB(x)
+        else:
+            x_f_ei = prob_v
         
-        self.plot()
-        
-        print("Initial safe point: ", self.x[0])
-        print("Est. optimal value: ", self.x_optimal)
-        print("Diff: ", np.abs(self.x[0] - self.x_optimal))
-        # print("F params: ", self.gp_f.kernel_.get_params())
-        # print("v params: ", self.gp_v.kernel_.get_params())
-         
-        return self.x_optimal
-        
+        return x_f_ei.item()
+    
+    def TS(self, x):
+        sample_f = self.gp_f.sample_y(x)
+        sample_v = self.gp_v.sample_y(x)
+
+        return (sample_f - self.lambda_penalty * np.maximum(sample_v, 0)).item()
+
+    def cdf_of_constraint_function(self, x, v):
+        pred, std = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
+        return norm.cdf(SAFETY_THRESHOLD, pred, std)
+
+    def distances(self, x, number=6):
+        dps = np.array([dp["x"] for dp in self.data_points[-number:]])
+        return np.array([x - dp for dp in dps])
+
     def plot(self, plot_recommendation: bool = True):
         """Plot objective and constraint posterior for debugging (OPTIONAL).
 
@@ -264,11 +250,6 @@ class BO_algo():
         y_pred_f, sigma_f = self.gp_f.predict(x, return_std=True)
         y_pred_v, sigma_v = self.gp_v.predict(x, return_std=True)
 
-        # Find the optimal point
-        opt_idx = np.argmax(y_pred_f)
-        opt_point = x[opt_idx]
-        opt_value = y_pred_f[opt_idx]
-
         # Plotting
         fig, axs = plt.subplots(2, 1, figsize=(10, 8))
 
@@ -276,7 +257,7 @@ class BO_algo():
         axs[0].fill_between(x.ravel(), y_pred_f.squeeze() - sigma_f, y_pred_f.squeeze() + sigma_f, alpha=0.1, color='k')
         axs[0].plot(x, y_pred_f.squeeze(), 'k', lw=1, label='Mean objective')
         axs[0].scatter(self.x, self.y_f, c='black', s=50, label='Other data points')
-        axs[0].scatter(opt_point, opt_value, c='red', s=50, label='Optimal point')
+        axs[0].scatter(self.x[0], self.y_f[0], c='red', s=50, label='Initial Point')
         axs[0].scatter(self.x_optimal, self.y_optimal, c='blue', s=50, label='Estimated Optimal Point')
         axs[0].set_title('Objective Function Posterior')
         axs[0].legend()
@@ -287,7 +268,7 @@ class BO_algo():
         axs[1].axhline(y=SAFETY_THRESHOLD, color='r', linestyle='--', label='Safety threshold')
         axs[1].fill_between(x.ravel(), y_pred_v.squeeze() - sigma_v, SAFETY_THRESHOLD, where=y_pred_v.squeeze() - sigma_v <= SAFETY_THRESHOLD, color='green', alpha=0.3, label='Safe region')
         axs[1].scatter(self.x, self.y_v, c='black', s=50, label='Other data points')
-        axs[1].scatter(opt_point, self.gp_v.predict(opt_point.reshape(1, -1)), c='red', s=50, label='Optimal point')
+        axs[1].scatter(self.x[0], self.y_v[0], c='red', s=50, label='Initial point')
         axs[1].scatter(self.x_optimal, self.v_optimal, c='blue', s=50, label='Estimated Optimal Point')
         axs[1].set_title('Constraint Function Posterior')
         axs[1].legend()
