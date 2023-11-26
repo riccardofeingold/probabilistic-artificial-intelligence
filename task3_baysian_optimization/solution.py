@@ -22,6 +22,7 @@ class BO_algo():
 
         self.number_data_points = 0
         self.data_points = []
+        self.PLOTS = False
 
         # mappings
         # TODO: 
@@ -38,7 +39,7 @@ class BO_algo():
         self.beta = 1
         self.lambda_penalty = 30
         self.v_prior_mean = 4
-        self.af_type = "ei"
+        self.af_type = "safe"
         self.epsilon = 0.01
         # fixed the randomnes
         np.random.seed(42)
@@ -57,27 +58,27 @@ class BO_algo():
         # using functions f and v.
         # In implementing this function, you may use
         # optimize_acquisition_function() defined below.
+        
+        next_point = self.optimize_acquisition_function()
 
-        if self.number_data_points == 0:
-            next_point = np.random.uniform(0, 10)
-        else:
-            next_point = self.optimize_acquisition_function()
+        ## This part below was written to prevent local minima approxmations
+        ## by checking whether the at least 4 of the last 6 points are closer than 0.1
+        ## Did not make a major improvement in the results
+        # distances = self.distances(next_point, 10)
+        # counter = 0
+        # for d in distances:
+        #     if d < 0.1:
+        #         counter += 1
+        
+        # if counter > 4:
+        #     noise = np.random.uniform(-1, 1)
+        #     if noise >= 0:
+        #         noise_clipped = np.clip(noise, 0.1, 1)
+        #     else:
+        #         noise_clipped = np.clip(noise, -0.1, -1)
 
-            # distances = self.distances(next_point, 10)
-            # counter = 0
-            # for d in distances:
-            #     if d < 0.1:
-            #         counter += 1
-            
-            # if counter > 4:
-            #     noise = np.random.uniform(-1, 1)
-            #     if noise >= 0:
-            #         noise_clipped = np.clip(noise, 0.1, 1)
-            #     else:
-            #         noise_clipped = np.clip(noise, -0.1, -1)
-
-            #     next_point += noise_clipped
-            #     next_point = np.clip(noise_clipped, 0, 10)
+        #     next_point += noise_clipped
+        #     next_point = np.clip(noise_clipped, 0, 10)
             
         return np.array(next_point).reshape(-1, 1)
 
@@ -132,6 +133,8 @@ class BO_algo():
             return self.UCB(x)
         elif self.af_type == "ei":
             return self.EI(x)
+        elif self.af_type == "safe":
+            return self.ImprovementBasedOnConstraintCDF(x)
         elif self.af_type == "ts":
             return self.TS(x)
     
@@ -171,7 +174,7 @@ class BO_algo():
         """
         # TODO: Return your predicted safe optimum of f.
         self._get_solution()
-        self.plot()
+        self.plot(plot_recommendation=self.PLOTS)
 
         return self.x_optimal
     
@@ -180,58 +183,74 @@ class BO_algo():
         self.y_f = np.array([t["f"] for t in self.data_points], dtype=np.float64)
         self.y_v = np.array([t["v"] for t in self.data_points], dtype=np.float64)
         
-        # self.prob_v = np.array([self.cdf_of_constraint_function(value_x, value_v) for value_x, value_v in zip(self.x, self.y_v)])
-        # feasible_mask = self.prob_v >= 0.95
+        # selecting only the points that satisfy the constraint v(x) < 4
         feasible_mask = self.y_v < SAFETY_THRESHOLD
         feasible_v = self.y_v[feasible_mask]
         
         feasible_y_f = self.y_f[feasible_mask]
         feasible_x = self.x[feasible_mask]
         
+        # choose the highest f value which satisfies constraint
         max_index = np.argmax(feasible_y_f)
         self.x_optimal = feasible_x[max_index]
         self.v_optimal = feasible_v[max_index]
         self.y_optimal = feasible_y_f[max_index]
 
+    # Upper confidence bound: gives better scores than EI version but is worse compared to the ImprovementBasedOnConstraintCDF
     def UCB(self, x):
         mean_f, std_f = self.gp_f.predict(x.reshape(-1, 1), return_std=True)
         mean_v, std_v = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
 
-        x_f_next_ucb = mean_f + np.sqrt(self.beta) * std_f
-        x_f_next_ucb -= self.lambda_penalty * np.maximum(mean_v, 0)
+        prob_cdf_v = norm.cdf(SAFETY_THRESHOLD, mean_v, std_v)
 
-        return x_f_next_ucb
+        if prob_cdf_v >= 0.95:
+            obj_ucb = mean_f + np.sqrt(self.beta) * std_f
+        else:
+            obj_ucb = mean_f + np.sqrt(self.beta) * std_f - self.lambda_penalty * np.maximum(mean_v, 0)
+
+        return obj_ucb
     
+    # Expected Improvement: implemented as described in "Constrained Bayesian optimization for automatic chemical design using variational autoencoders"
     def EI(self, x):
         mean_f, std_f = self.gp_f.predict(x.reshape(-1, 1), return_std=True)
         mean_v, std_v = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
 
         self._get_solution()
             
-        z = (self.y_optimal - mean_f - self.epsilon) / std_f
-        prob_v = norm.cdf(SAFETY_THRESHOLD, mean_v, std_v)
-        # x_f_ei = std_f * (norm.cdf(z, 0, 1) * z + norm.pdf(z, 0, 1)) * prob_v
-        if prob_v >= 0.998 and False:
-            x_f_ei = std_f * (norm.cdf(z, 0, 1) * z + norm.pdf(z, 0, 1)) * prob_v
-            x_f_ei = self.UCB(x)
+        zero_variance = False
+        if np.isclose(std_f, 0):
+            zero_variance = True
         else:
-            x_f_ei = prob_v
+            z = (mean_f - self.y_optimal - self.epsilon) / std_f
         
-        return x_f_ei.item()
-    
+        prob_cdf_v = norm.cdf(SAFETY_THRESHOLD, loc=mean_v, scale=std_v)
+        if prob_cdf_v >= 0.95 and not zero_variance:
+            obj_ei = norm.cdf(z) * (mean_f - self.y_optimal - self.epsilon) + std_f * norm.pdf(z) # EI(z)
+            obj_ei *= prob_cdf_v
+        else:
+            obj_ei = prob_cdf_v
+        
+        return obj_ei.item()
+
+    # According to the paper: Constrained Bayesian optimization for automatic chemical design using variational autoencoders
+    # one can assume that the constraint is violated everywhere. In this case the x_optimal is found by using only the cumulative
+    # distribution function of the constraint v. Using only this ensures that a safe region is found.
+    def ImprovementBasedOnConstraintCDF(self, x):
+        mean_v, std_v = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
+
+        return norm.cdf(SAFETY_THRESHOLD, loc=mean_v, scale=std_v).item()
+
+    # Thomson Sampling: Implemented for comparison     
     def TS(self, x):
         sample_f = self.gp_f.sample_y(x)
         sample_v = self.gp_v.sample_y(x)
 
         return (sample_f - self.lambda_penalty * np.maximum(sample_v, 0)).item()
 
-    def cdf_of_constraint_function(self, x, v):
-        pred, std = self.gp_v.predict(x.reshape(-1, 1), return_std=True)
-        return norm.cdf(SAFETY_THRESHOLD, pred, std)
-
+    # Calculates the difference between the next_point and the last 6 points
     def distances(self, x, number=6):
         dps = np.array([dp["x"] for dp in self.data_points[-number:]])
-        return np.array([x - dp for dp in dps])
+        return np.array([np.abs(x - dp) for dp in dps])
 
     def plot(self, plot_recommendation: bool = True):
         """Plot objective and constraint posterior for debugging (OPTIONAL).
@@ -241,15 +260,15 @@ class BO_algo():
         plot_recommendation: bool
             Plots the recommended point if True.
         """
-        # Assume gp_f and gp_v are your trained Gaussian Process models for the objective and constraint
-        # Let's also assume DOMAIN is your domain of interest, for example, np.array([[0, 10]])
+        if not plot_recommendation:
+            return 0
+        
         x = np.atleast_2d(np.linspace(DOMAIN[0, 0], DOMAIN[0, 1], 1000)).T
 
         # Predictions for objective and constraint functions
         y_pred_f, sigma_f = self.gp_f.predict(x, return_std=True)
         y_pred_v, sigma_v = self.gp_v.predict(x, return_std=True)
 
-        # Plotting
         fig, axs = plt.subplots(2, 1, figsize=(10, 8))
 
         # Objective function plot
@@ -272,15 +291,13 @@ class BO_algo():
         axs[1].set_title('Constraint Function Posterior')
         axs[1].legend()
 
-        # Set common labels
         for ax in axs:
             ax.set_xlabel('Input domain')
             ax.set_ylabel('Output')
             ax.grid(True)
 
-        # Show plot
         plt.tight_layout()
-        # plt.show()
+
         counter = 1
         extension = ".pdf"
         filename = f"plots_{counter}{extension}"
