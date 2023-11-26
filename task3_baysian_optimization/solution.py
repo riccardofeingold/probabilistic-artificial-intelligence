@@ -32,7 +32,7 @@ class BO_algo():
         self.kernel_v_matern = DotProduct(sigma_0=0) + Matern(nu=2.5, length_scale=1, length_scale_bounds=(0.5, 10))
         self.kernel_v_rbf = DotProduct(sigma_0=0) + ConstantKernel(np.sqrt(2)) * RBF(length_scale=0.5, length_scale_bounds=(0.5, 10))
 
-        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_rbf, alpha=0.15**2, optimizer=None, random_state=0)
+        self.gp_f = GaussianProcessRegressor(kernel=self.kernel_f_rbf, alpha=0.15**2, optimizer=None, random_state=0, normalize_y=True)
         self.gp_v = GaussianProcessRegressor(kernel=self.kernel_v_matern, alpha=0.0001**2, optimizer=None, random_state=0)
 
         # attributes for acquisition function
