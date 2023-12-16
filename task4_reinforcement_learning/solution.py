@@ -21,26 +21,27 @@ class NeuralNetwork(nn.Module):
                                 hidden_layers: int, activation: str):
         super(NeuralNetwork, self).__init__()
 
-        # TODO: Implement this function which should define a neural network 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # DONE: Implement this function which should define a neural network 
         # with a variable number of hidden layers and hidden units.
         # Here you should define layers which your network will use.
         self.layers = nn.ModuleList()
 
         # add input layer
-        self.layers.append(nn.Linear(input_dim, hidden_size))
+        self.layers.append(nn.Linear(input_dim, hidden_size, device=self.device))
 
         # add hidden layers
         for _ in range(hidden_layers - 1):
-            self.layers.append(nn.Linear(hidden_size, hidden_size))
+            self.layers.append(nn.Linear(hidden_size, hidden_size, device=self.device))
         
         # add output layer for mu and sigma
-        self.output_layer = nn.Linear(hidden_size, output_dim)
+        self.output_layer = nn.Linear(hidden_size, output_dim, device=self.device)
         
         # activation function
         self.activation_fn = getattr(nn.functional, activation, nn.functional.relu)
 
     def forward(self, s: torch.Tensor) -> torch.Tensor:
-        # TODO: Implement the forward pass for the neural network you have defined.
+        # DONE: Implement the forward pass for the neural network you have defined.
         x = s
         for layer in self.layers:
             x = self.activation_fn(layer(x))
@@ -65,11 +66,11 @@ class Actor:
         '''
         This function sets up the actor network in the Actor class.
         '''
-        # TODO: Implement this function which sets up the actor network. 
+        # DONE: Implement this function which sets up the actor network. 
         # Take a look at the NeuralNetwork class in utils.py.
         self.actor_network = NeuralNetwork(
             self.state_dim,
-            2*self.action_dim,
+            2*self.action_dim, # since we want to have a mu and stdv
             self.hidden_size,
             self.hidden_layers,
             activation="relu"
@@ -98,7 +99,7 @@ class Actor:
         '''
         assert state.shape == (3,) or state.shape[1] == self.state_dim, 'State passed to this method has a wrong shape'
         action , log_prob = torch.zeros(state.shape[0]), torch.ones(state.shape[0])
-        # TODO: Implement this function which returns an action and its log probability.
+        # DONE: Implement this function which returns an action and its log probability.
         # If working with stochastic policies, make sure that its log_std are clamped 
         # using the clamp_log_std function.
         state = state.to(self.device)
@@ -110,16 +111,17 @@ class Actor:
         std = log_stdv.exp()
         normal_dist = Normal(mean, std)
         if deterministic:
-            # actions = normal_dist.sample()
-            # action = torch.tanh(actions)
+            # bound the mean using tanh
             action = torch.tanh(mean)
             log_prob = torch.zeros((state.shape[0], self.action_dim))
         else:
             # we choose rsample because it allows for backpropagation
             actions = normal_dist.rsample()
             action = torch.tanh(actions)
-            log_prob = (normal_dist.log_prob(actions) - torch.log(1 - action.pow(2) + 1e-6)).sum(1, keepdim=True)
-        # log_prob = normal_dist.log_prob(action)
+            # Eq 21 from Paper "Soft Actor-Critic: Off-Policy Maximum Entropy Deep RL with a Stochastic Actor"
+            # the 1e-10 value should prevent a log(0) error
+            log_prob = (normal_dist.log_prob(actions) - torch.log(1 - action.pow(2) + 1e-10)).sum(1, keepdim=True)
+
         assert action.shape == (state.shape[0], self.action_dim) and \
             log_prob.shape == (state.shape[0], self.action_dim), 'Incorrect shape for action or log_prob.'
         return action, log_prob
@@ -139,7 +141,7 @@ class Critic:
         self.setup_critic()
 
     def setup_critic(self):
-        # TODO: Implement this function which sets up the critic(s). Take a look at the NeuralNetwork 
+        # DONE: Implement this function which sets up the critic(s). Take a look at the NeuralNetwork 
         # class in utils.py. Note that you can have MULTIPLE critic networks in this class.
         self.critic_network = NeuralNetwork(
             self.state_dim + self.action_dim,
@@ -179,7 +181,7 @@ class Agent:
     def __init__(self):
         # Environment variables. You don't need to change this.
         self.state_dim = 3  # [cos(theta), sin(theta), theta_dot]
-        self.action_dim = 1  # [torque] in[-1,1]
+        self.action_dim = 1  # [torque] in [-1,1]
         self.batch_size = 200
         self.min_buffer_size = 1000
         self.max_buffer_size = 100000
@@ -192,19 +194,20 @@ class Agent:
         self.setup_agent()
 
     def setup_agent(self):
-        # TODO: Setup off-policy agent with policy and critic classes. 
+        # DONE: Setup off-policy agent with policy and critic classes. 
         # Feel free to instantiate any other parameters you feel you might need.
+        # reward scale 
+        self.reward_scale = 5
         # entropy scale
-        self.alpha = 0.2
+        self.alpha = 1/self.reward_scale
         # discount factor
         self.gamma = 0.99
         # soft update parameter
         self.tau = 0.005
         # learning rate
         self.lr = 3e-4
-        # reward scale 
-        self.reward_scale = 5
 
+        # initialize actor neural network
         self.actor = Actor(
             hidden_size=256,
             hidden_layers=2,
@@ -214,13 +217,17 @@ class Agent:
             device=self.device
         )
 
+        # initialize first critic networks
         self.critics1 = Critic(hidden_size=256, hidden_layers=2, critic_lr=self.lr,
                           state_dim=self.state_dim, action_dim=self.action_dim,
                           device=self.device)
+        
+        # initialize second critic networks
         self.critics2 = Critic(hidden_size=256, hidden_layers=2, critic_lr=self.lr,
                           state_dim=self.state_dim, action_dim=self.action_dim,
                           device=self.device)
         
+        # initializing both target critic network by copying the previously initilized NN
         self.target_critics1 = deepcopy(self.critics1)
         self.target_critics2 = deepcopy(self.critics2)
         pass
@@ -232,7 +239,7 @@ class Agent:
                     You can find it useful if you want to sample from deterministic policy.
         :return: np.ndarray,, action to apply on the environment, shape (1,)
         """
-        # TODO: Implement a function that returns an action from the policy for the state s.
+        # DONE: Implement a function that returns an action from the policy for the state s.
         state = torch.FloatTensor(s).to(self.device).unsqueeze(0)
         if train:
             action, _ = self.actor.get_action_and_log_prob(state, deterministic=False)
@@ -278,7 +285,7 @@ class Agent:
         from the replay buffer,and then updates the policy and critic networks 
         using the sampled batch.
         '''
-        # TODO: Implement one step of training for the agent.
+        # DONE: Implement one step of training for the agent.
         # Hint: You can use the run_gradient_update_step for each policy and critic.
         # Example: self.run_gradient_update_step(self.policy, policy_loss)
 
@@ -286,7 +293,15 @@ class Agent:
         batch = self.memory.sample(self.batch_size)
         s_batch, a_batch, r_batch, s_prime_batch = batch
 
-        # TODO: Implement Critic(s) update here.
+        # ensure that these tensor are sent to the right device
+        s_batch = s_batch.to(self.device)
+        a_batch = a_batch.to(self.device)
+        r_batch = r_batch.to(self.device)
+        s_prime_batch = s_prime_batch.to(self.device)
+
+        # DONE: Implement Critic(s) update here.
+        # implementing Eq 7 from paper "Soft Actor-Critic: Off-Policy Maximum Entropy Deep RL with a Stochastic Actor"
+        ## the soft Q-function parameters can be trained to minimize the soft bellman residual
         with torch.no_grad():
             next_actions, log_probs = self.actor.get_action_and_log_prob(s_prime_batch, deterministic=False)
             Q1_target = self.target_critics1.forward(s_prime_batch, next_actions)
@@ -300,19 +315,24 @@ class Agent:
         critic1_loss = 0.5 * torch.nn.functional.mse_loss(Q1_current, Q_target)
         critic2_loss = 0.5 * torch.nn.functional.mse_loss(Q2_current, Q_target)
         
+        # after calculating the critic loss based on Eq 7, we do a gradient step
         self.run_gradient_update_step(self.critics1, critic1_loss)
         self.run_gradient_update_step(self.critics2, critic2_loss)
         
-        self.critic_target_update(self.critics1.critic_network, self.target_critics1.critic_network, tau=self.tau, soft_update=True)
-        self.critic_target_update(self.critics2.critic_network, self.target_critics2.critic_network, tau=self.tau, soft_update=True)
-        # TODO: Implement Policy update here
+        # DONE: Implement Policy update here
+        # implementation of Eq. 12 from paper "Soft Actor-Critic: Off-Policy Maximum Entropy Deep RL with a Stochastic Actor"
         new_actions, log_probs = self.actor.get_action_and_log_prob(s_batch, deterministic=False)
         Q1_new = self.critics1.forward(s_batch, new_actions)
         Q2_new = self.critics2.forward(s_batch, new_actions)
         Q_new = torch.min(Q1_new, Q2_new)
         actor_loss = (log_probs - Q_new).mean()
         
+        # gradient step for actor network
         self.run_gradient_update_step(self.actor, actor_loss)
+
+        # do the soft update for the target networks with polyak averaging 
+        self.critic_target_update(self.critics1.critic_network, self.target_critics1.critic_network, tau=self.tau, soft_update=True)
+        self.critic_target_update(self.critics2.critic_network, self.target_critics2.critic_network, tau=self.tau, soft_update=True)
         
 
 # This main function is provided here to enable some basic testing. 
