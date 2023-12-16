@@ -202,7 +202,7 @@ class Agent:
         # learning rate
         self.lr = 3e-4
         # reward scale 
-        self.reward_scale = 1
+        self.reward_scale = 2
 
         self.actor = Actor(
             hidden_size=256,
