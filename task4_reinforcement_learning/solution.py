@@ -110,14 +110,15 @@ class Actor:
         std = log_stdv.exp()
         normal_dist = Normal(mean, std)
         if deterministic:
-            actions = normal_dist.sample()
-            action = torch.tanh(actions)
+            # actions = normal_dist.sample()
+            # action = torch.tanh(actions)
+            action = torch.tanh(mean)
+            log_prob = torch.zeros((state.shape[0], self.action_dim))
         else:
             # we choose rsample because it allows for backpropagation
             actions = normal_dist.rsample()
             action = torch.tanh(actions)
-        
-        log_prob = (normal_dist.log_prob(actions) - torch.log(1 - action.pow(2) + 1e-6)).sum(1, keepdim=True)
+            log_prob = (normal_dist.log_prob(actions) - torch.log(1 - action.pow(2) + 1e-6)).sum(1, keepdim=True)
         # log_prob = normal_dist.log_prob(action)
         assert action.shape == (state.shape[0], self.action_dim) and \
             log_prob.shape == (state.shape[0], self.action_dim), 'Incorrect shape for action or log_prob.'
@@ -202,7 +203,7 @@ class Agent:
         # learning rate
         self.lr = 3e-4
         # reward scale 
-        self.reward_scale = 2
+        self.reward_scale = 5
 
         self.actor = Actor(
             hidden_size=256,
