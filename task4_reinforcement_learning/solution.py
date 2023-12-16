@@ -196,16 +196,18 @@ class Agent:
     def setup_agent(self):
         # DONE: Setup off-policy agent with policy and critic classes. 
         # Feel free to instantiate any other parameters you feel you might need.
+        # learning rate
+        self.lr = 3e-4
         # reward scale 
         self.reward_scale = 5
         # entropy scale
-        self.alpha = 1/self.reward_scale
+        self.alpha = TrainableParameter(init_param=1/self.reward_scale, lr_param=self.lr, train_param=True, device=self.device)
         # discount factor
         self.gamma = 0.99
         # soft update parameter
         self.tau = 0.005
-        # learning rate
-        self.lr = 3e-4
+        # entropy target (used to calculate the loss value of self.alpha)
+        self.entropy_target = -self.action_dim
 
         # initialize actor neural network
         self.actor = Actor(
@@ -306,8 +308,8 @@ class Agent:
             next_actions, log_probs = self.actor.get_action_and_log_prob(s_prime_batch, deterministic=False)
             Q1_target = self.target_critics1.forward(s_prime_batch, next_actions)
             Q2_target = self.target_critics2.forward(s_prime_batch, next_actions)
-            min_Q_target_next = torch.min(Q1_target, Q2_target) - self.alpha * log_probs
-            Q_target = self.reward_scale * r_batch + self.gamma * min_Q_target_next
+            min_Q_target_next = torch.min(Q1_target, Q2_target) - self.alpha.get_param() * log_probs
+            Q_target = r_batch + self.gamma * min_Q_target_next
         
         Q1_current = self.critics1.forward(s_batch, a_batch)
         Q2_current = self.critics2.forward(s_batch, a_batch)
@@ -329,10 +331,16 @@ class Agent:
         Q1_new = self.critics1.forward(s_batch, new_actions)
         Q2_new = self.critics2.forward(s_batch, new_actions)
         Q_new = torch.min(Q1_new, Q2_new)
-        actor_loss = -(Q_new - self.alpha * log_probs).mean()
+        actor_loss = -(Q_new - self.alpha.get_param() * log_probs).mean()
         
         # gradient step for actor network
         self.run_gradient_update_step(self.actor, actor_loss)
+
+        # improve the temperatur scale alpha based on Eq. 14 paper "Soft Actor-Critic Algorithms and Applications"
+        self.alpha.optimizer.zero_grad()
+        temperature_loss = (self.alpha.get_param() * (-log_probs - self.entropy_target).detach()).mean()
+        temperature_loss.backward()
+        self.alpha.optimizer.step()
 
         
 
