@@ -102,7 +102,7 @@ class Actor:
         # If working with stochastic policies, make sure that its log_std are clamped 
         # using the clamp_log_std function.
         state = state.to(self.device)
-        # forward pass through actor 
+        # forward pass through actor
         mean, log_stdv = self.actor_network(state).chunk(2, dim=-1)
         log_stdv = self.clamp_log_std(log_stdv)
 
@@ -110,13 +110,15 @@ class Actor:
         std = log_stdv.exp()
         normal_dist = Normal(mean, std)
         if deterministic:
-            action = torch.tanh(mean)
+            actions = normal_dist.sample()
+            action = torch.tanh(actions)
         else:
             # we choose rsample because it allows for backpropagation
-            action = torch.tanh(normal_dist.rsample())
+            actions = normal_dist.rsample()
+            action = torch.tanh(actions)
         
-        log_prob = (normal_dist.log_prob(action) - torch.log(1 - action.pow(2) + 1e-6)).sum(1, keepdim=True)
-
+        log_prob = (normal_dist.log_prob(actions) - torch.log(1 - action.pow(2) + 1e-6)).sum(1, keepdim=True)
+        # log_prob = normal_dist.log_prob(action)
         assert action.shape == (state.shape[0], self.action_dim) and \
             log_prob.shape == (state.shape[0], self.action_dim), 'Incorrect shape for action or log_prob.'
         return action, log_prob
@@ -197,20 +199,24 @@ class Agent:
         self.gamma = 0.99
         # soft update parameter
         self.tau = 0.005
-        
+        # learning rate
+        self.lr = 3e-4
+        # reward scale 
+        self.reward_scale = 1
+
         self.actor = Actor(
             hidden_size=256,
             hidden_layers=2,
-            actor_lr=0.0003,
+            actor_lr=self.lr,
             state_dim=self.state_dim,
             action_dim=self.action_dim,
             device=self.device
         )
 
-        self.critics1 = Critic(hidden_size=256, hidden_layers=2, critic_lr=0.0003,
+        self.critics1 = Critic(hidden_size=256, hidden_layers=2, critic_lr=self.lr,
                           state_dim=self.state_dim, action_dim=self.action_dim,
                           device=self.device)
-        self.critics2 = Critic(hidden_size=256, hidden_layers=2, critic_lr=0.0003,
+        self.critics2 = Critic(hidden_size=256, hidden_layers=2, critic_lr=self.lr,
                           state_dim=self.state_dim, action_dim=self.action_dim,
                           device=self.device)
         
@@ -285,28 +291,28 @@ class Agent:
             Q1_target = self.target_critics1.forward(s_prime_batch, next_actions)
             Q2_target = self.target_critics2.forward(s_prime_batch, next_actions)
             min_Q_target_next = torch.min(Q1_target, Q2_target) - self.alpha * log_probs
-            Q_target = r_batch + self.gamma * min_Q_target_next
+            Q_target = self.reward_scale * r_batch + self.gamma * min_Q_target_next
         
         Q1_current = self.critics1.forward(s_batch, a_batch)
         Q2_current = self.critics2.forward(s_batch, a_batch)
         
-        critic1_loss = torch.nn.functional.mse_loss(Q1_current, Q_target)
-        critic2_loss = torch.nn.functional.mse_loss(Q2_current, Q_target)
+        critic1_loss = 0.5 * torch.nn.functional.mse_loss(Q1_current, Q_target)
+        critic2_loss = 0.5 * torch.nn.functional.mse_loss(Q2_current, Q_target)
         
         self.run_gradient_update_step(self.critics1, critic1_loss)
         self.run_gradient_update_step(self.critics2, critic2_loss)
         
+        self.critic_target_update(self.critics1.critic_network, self.target_critics1.critic_network, tau=self.tau, soft_update=True)
+        self.critic_target_update(self.critics2.critic_network, self.target_critics2.critic_network, tau=self.tau, soft_update=True)
         # TODO: Implement Policy update here
         new_actions, log_probs = self.actor.get_action_and_log_prob(s_batch, deterministic=False)
         Q1_new = self.critics1.forward(s_batch, new_actions)
         Q2_new = self.critics2.forward(s_batch, new_actions)
         Q_new = torch.min(Q1_new, Q2_new)
-        actor_loss = (self.alpha * log_probs - Q_new).mean()
+        actor_loss = (log_probs - Q_new).mean()
         
         self.run_gradient_update_step(self.actor, actor_loss)
         
-        self.critic_target_update(self.critics1.critic_network, self.target_critics1.critic_network, tau=self.tau, soft_update=True)
-        self.critic_target_update(self.critics2.critic_network, self.target_critics2.critic_network, tau=self.tau, soft_update=True)
 
 # This main function is provided here to enable some basic testing. 
 # ANY changes here WON'T take any effect while grading.
