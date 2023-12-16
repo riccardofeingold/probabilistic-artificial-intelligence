@@ -119,8 +119,8 @@ class Actor:
             actions = normal_dist.rsample()
             action = torch.tanh(actions)
             # Eq 21 from Paper "Soft Actor-Critic: Off-Policy Maximum Entropy Deep RL with a Stochastic Actor"
-            # the 1e-10 value should prevent a log(0) error
-            log_prob = (normal_dist.log_prob(actions) - torch.log(1 - action.pow(2) + 1e-10)).sum(1, keepdim=True)
+            # the 1e-6 value should prevent a log(0) error
+            log_prob = (normal_dist.log_prob(actions) - torch.log(1 - action.pow(2) + 1e-6)).sum(1, keepdim=True)
 
         assert action.shape == (state.shape[0], self.action_dim) and \
             log_prob.shape == (state.shape[0], self.action_dim), 'Incorrect shape for action or log_prob.'
@@ -319,20 +319,21 @@ class Agent:
         self.run_gradient_update_step(self.critics1, critic1_loss)
         self.run_gradient_update_step(self.critics2, critic2_loss)
         
+        # do the soft update for the target networks with polyak averaging 
+        self.critic_target_update(self.critics1.critic_network, self.target_critics1.critic_network, tau=self.tau, soft_update=True)
+        self.critic_target_update(self.critics2.critic_network, self.target_critics2.critic_network, tau=self.tau, soft_update=True)
+        
         # DONE: Implement Policy update here
         # implementation of Eq. 12 from paper "Soft Actor-Critic: Off-Policy Maximum Entropy Deep RL with a Stochastic Actor"
         new_actions, log_probs = self.actor.get_action_and_log_prob(s_batch, deterministic=False)
         Q1_new = self.critics1.forward(s_batch, new_actions)
         Q2_new = self.critics2.forward(s_batch, new_actions)
         Q_new = torch.min(Q1_new, Q2_new)
-        actor_loss = (log_probs - Q_new).mean()
+        actor_loss = -(Q_new - self.alpha * log_probs).mean()
         
         # gradient step for actor network
         self.run_gradient_update_step(self.actor, actor_loss)
 
-        # do the soft update for the target networks with polyak averaging 
-        self.critic_target_update(self.critics1.critic_network, self.target_critics1.critic_network, tau=self.tau, soft_update=True)
-        self.critic_target_update(self.critics2.critic_network, self.target_critics2.critic_network, tau=self.tau, soft_update=True)
         
 
 # This main function is provided here to enable some basic testing. 
