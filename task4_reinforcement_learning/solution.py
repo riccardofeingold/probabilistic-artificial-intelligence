@@ -229,9 +229,13 @@ class Agent:
                           state_dim=self.state_dim, action_dim=self.action_dim,
                           device=self.device)
         
-        # initializing both target critic network by copying the previously initilized NN
-        self.target_critics1 = deepcopy(self.critics1)
-        self.target_critics2 = deepcopy(self.critics2)
+        # initializing both target critic network
+        self.target_critics1 = Critic(hidden_size=256, hidden_layers=2, critic_lr=self.lr,
+                          state_dim=self.state_dim, action_dim=self.action_dim,
+                          device=self.device)
+        self.target_critics2 = Critic(hidden_size=256, hidden_layers=2, critic_lr=self.lr,
+                          state_dim=self.state_dim, action_dim=self.action_dim,
+                          device=self.device)
         pass
 
     def get_action(self, s: np.ndarray, train: bool) -> np.ndarray:
@@ -336,7 +340,7 @@ class Agent:
         # gradient step for actor network
         self.run_gradient_update_step(self.actor, actor_loss)
 
-        # improve the temperatur scale alpha based on Eq. 14 paper "Soft Actor-Critic Algorithms and Applications"
+        # improve the temperatur scale alpha based on Eq. 18 paper "Soft Actor-Critic Algorithms and Applications"
         self.alpha.optimizer.zero_grad()
         temperature_loss = (self.alpha.get_param() * (-log_probs - self.entropy_target).detach()).mean()
         temperature_loss.backward()
