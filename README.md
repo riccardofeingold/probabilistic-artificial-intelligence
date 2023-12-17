@@ -17,3 +17,12 @@ For the next_recommendation method, we call the optimize_acquisition_function. P
 
 The best solution is selected by first filtering out all points that do not satisfy the constraint v(x) < 4. From these feasible points, the structural feature x_optimal is chosen based on the biggest value f.
 For a better understanding of the Bayesian optimization process, we implement a plot function that includes the objective and constraint function, the estimated optimal point, the initial point, and all the other used points.
+
+## Task 4: Soft Actor Critic Implementation
+In this task, I implemented SAC with automating entropy adjustment that uses an actor and two critics NN.
+
+The actor class needs to return the action and the corresponding log probability. The given papers suggest using only a stochastic policy for the training and a deterministic for the testing. The stochastic policy samples a bounded (using tanh) action from a clamped normal distribution with mean and stdv returned by the actor NN. The latter returns the bounded mean. To calculate the log_prob of the action in the stochastic case I implemented Eq 21 (ref. in code). To prevent log(1 - tanh^2(a)) = log(0) I added a small value (1e-6) to the argument. 
+
+To set up the agent class I added added an actor, two critics, and two target critics (all with 2 hidden layers of size 256). Inside the get_action, I return the action computed by the actor, which either uses a deterministic (testing) or a stochastic policy (training). 
+
+In the training method, I first implemented the critic's update according to Eq 7 (ref. in code). I approximated Q_hat with samples (since it’s an expectation) using “r+gamma*(min(Q1, Q2)-alpha*log(pi(a’|s’))”, where a’ is sampled from the policy given s’. After calculating the MSE loss for both critics, a gradient step is done and the target networks get updated using Polyak averaging. Next, the policy gets updated based on the cost function described in Eq. 12 (ref. in code). Finally, I optimize the entropy temperature using Eq. 18 (ref. in code).
